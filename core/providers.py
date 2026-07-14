@@ -9,11 +9,12 @@ from datetime import datetime, timezone
 
 import litellm
 
+from config.settings import MAX_RETRIES, RETRY_BACKOFF_SECONDS
 from core.metrics import compute_throughput, compute_cost_efficiency
 from core.quality_scoring import score_quality
 
 
-def build_error_log(provider, model_name, prompt, latency_ms, error):
+def build_error_log(provider, model_name, prompt, latency_ms, error, error_type, attempts_used):
     return {
         "provider": provider,
         "trace_id": str(uuid.uuid4()),
@@ -31,8 +32,44 @@ def build_error_log(provider, model_name, prompt, latency_ms, error):
         "quality_score": None,
         "quality_reasoning": None,
         "cost_efficiency": None,
+        "request_id": None,
+        "attempts_used": attempts_used,
+        "error_type": error_type,
         "error": error
     }
+
+
+def _call_with_retries(model_name: str, prompt: str):
+    """
+    Calls litellm.completion with a simple retry-with-backoff loop.
+    Returns a tuple: (response, error_message, error_type, attempts_used).
+    On success, error_message and error_type are None.
+    On final failure (all retries exhausted), response is None.
+
+    This lives in its own function because retrying is an instrumentation
+    concern (measuring/handling real-world call reliability), separate
+    from building the result log.
+    """
+    last_error = None
+    last_error_type = None
+
+    for attempt in range(1, MAX_RETRIES + 2):  # +2: first attempt + MAX_RETRIES retries
+        try:
+            response = litellm.completion(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response, None, None, attempt
+        except Exception as e:
+            last_error = str(e)
+            last_error_type = type(e).__name__
+            if attempt <= MAX_RETRIES:
+                backoff = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+                print(f"   ...retry {attempt}/{MAX_RETRIES} after {last_error_type}, "
+                      f"waiting {backoff}s")
+                time.sleep(backoff)
+
+    return None, last_error, last_error_type, MAX_RETRIES + 1
 
 
 def call_provider(provider_name: str, model_name: str, prompt: str) -> dict:
@@ -42,23 +79,16 @@ def call_provider(provider_name: str, model_name: str, prompt: str) -> dict:
     metric only needs to be added in one place.
     """
     start_time = time.perf_counter()
-    error = None
-    response = None
 
-    try:
-        response = litellm.completion(
-            model=model_name,
-            messages=[{"role": "user", "content": prompt}]
-        )
-    except Exception as e:
-        error = str(e)
+    response, error, error_type, attempts_used = _call_with_retries(model_name, prompt)
 
     end_time = time.perf_counter()
     latency_ms = (end_time - start_time) * 1000
 
     if error:
         print(f" ERREUR {provider_name} : {error}")
-        return build_error_log(provider_name, model_name, prompt, latency_ms, error)
+        return build_error_log(provider_name, model_name, prompt, latency_ms,
+                                error, error_type, attempts_used)
 
     usage = response.usage
     input_tokens = usage.prompt_tokens
@@ -67,6 +97,11 @@ def call_provider(provider_name: str, model_name: str, prompt: str) -> dict:
 
     finish_reason = response.choices[0].finish_reason
     response_text = response.choices[0].message.content
+
+    # Provider-assigned request ID, if exposed on the response object.
+    # Useful for cross-referencing this exact call against the
+    # provider's own dashboard/logs later.
+    request_id = getattr(response, "id", None)
 
     try:
         total_cost_usd = litellm.completion_cost(response)
@@ -94,5 +129,8 @@ def call_provider(provider_name: str, model_name: str, prompt: str) -> dict:
         "quality_score": quality["quality_score"],
         "quality_reasoning": quality["quality_reasoning"],
         "cost_efficiency": cost_efficiency,
+        "request_id": request_id,
+        "attempts_used": attempts_used,
+        "error_type": None,
         "error": None
     }

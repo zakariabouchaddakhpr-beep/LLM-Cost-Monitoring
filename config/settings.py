@@ -17,3 +17,8 @@ PROVIDERS = [
     ("gemini", "gemini/gemini-3.5-flash"),
     ("cerebras", "cerebras/gpt-oss-120b"),
 ]
+
+# Instrumentation-layer retry behavior for transient failures
+# (rate limits, brief timeouts, connection blips).
+MAX_RETRIES = 2          # number of retries AFTER the first attempt
+RETRY_BACKOFF_SECONDS = 1.5  # base delay, doubled on each subsequent retry
