@@ -1,69 +1,49 @@
 """
-Entry point. Run with: python main.py
-Loops over the providers defined in config/settings.py, calls each one,
-saves a JSON log, and prints a summary line per provider.
+Example usage of the LLM monitoring library.
+
+This is NOT a benchmark comparing providers against each other — it
+demonstrates how a developer would use LLMMonitor as a middleman
+around whichever single LLM their application actually uses.
+
+Run with: python main.py
 """
 
 import json
 import os
-from datetime import datetime, timezone
 
-from config.settings import PROVIDERS, JUDGE_MODEL
-from core.providers import call_provider
+from core.monitor import LLMMonitor
 
 
-def print_result(log, provider_name):
-    if log.get("error"):
-        print(f"{provider_name} : ERREUR - {log['error']}")
+def print_result(result: dict):
+    if result.get("error"):
+        print(f"Error ({result['error_type']}): {result['error']}")
         return
 
-    cost_display = f"{log['cost_usd']} $" if log['cost_usd'] is not None else "N/A"
-    tps_display = f"{log['tokens_per_second']} tok/s" if log['tokens_per_second'] is not None else "N/A"
-    quality_display = f"{log['quality_score']}/10" if log['quality_score'] is not None else "N/A"
-    efficiency_display = f"{log['cost_efficiency']} quality/$" if log['cost_efficiency'] is not None else "N/A"
+    cost_display = f"{result['cost_usd']} $" if result['cost_usd'] is not None else "N/A"
+    tps_display = f"{result['tokens_per_second']} tok/s" if result['tokens_per_second'] is not None else "N/A"
+    quality_display = f"{result['quality_score']}/10" if result['quality_score'] is not None else "N/A"
 
-    print(f"✅ {provider_name} : {log['total_tokens']} tokens | "
-          f"Latence: {round(log['latency_ms'])} ms | "
-          f"Débit: {tps_display} | "
-          f"Fin: {log['finish_reason']} | "
-          f"Coût: {cost_display} | "
-          f"Qualité: {quality_display} | "
-          f"Efficacité: {efficiency_display}")
+    print(f"✅ {result['provider']} ({result['model']})")
+    print(f"   Tokens: {result['total_tokens']} | Latency: {round(result['latency_ms'])} ms | "
+          f"Débit: {tps_display}")
+    print(f"   Coût: {cost_display} | Qualité: {quality_display} | "
+          f"Fin: {result['finish_reason']} | Tentatives: {result['attempts_used']}")
 
 
 def main():
-    print("**************************************************************")
-    print("Demo : Groq Gemini Cerebras - avec metriques etendues")
-    print("**************************************************************")
+    # The developer picks ONE provider their app actually uses.
+    # Swap "anthropic" for "openai", "gemini", "groq", or "cerebras" —
+    # nothing else below needs to change, thanks to the Factory pattern.
+    monitor = LLMMonitor(provider_name="gemini")
 
-    test_prompt = "Help me pick a new manhwa to read, based on my preferences for action, fantasy, and romance."
-
-    results = []
-    for i, (provider_name, model_name) in enumerate(PROVIDERS, start=1):
-        print(f"\n {i}. Appel avec {provider_name.capitalize()}")
-        print("**************************************************************")
-        log = call_provider(provider_name, model_name, test_prompt)
-        results.append(log)
-
-    output_data = {
-        "demo_name": "Demo 1 - metriques etendues",
-        "generated_at": datetime.now(timezone.utc).isoformat() + "Z",
-        "judge_model": JUDGE_MODEL,
-        "calls": results
-    }
+    prompt = "Explain the Factory design pattern in 3 sentences."
+    result = monitor.call(prompt)
 
     os.makedirs("results", exist_ok=True)
-    output_path = os.path.join("results", "output_litellm.json")
+    with open(os.path.join("results", "call_log.json"), "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2, ensure_ascii=False)
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(output_data, f, indent=2, ensure_ascii=False)
-
-    print("**************************************************************")
-    print("Results:")
-    print("**************************************************************")
-
-    for log, (provider_name, _) in zip(results, PROVIDERS):
-        print_result(log, provider_name.capitalize())
+    print_result(result)
 
 
 if __name__ == "__main__":
