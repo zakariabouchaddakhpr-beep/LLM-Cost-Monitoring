@@ -12,7 +12,7 @@ JUDGE_MODEL = "groq/llama-3.3-70b-versatile"
 
 
 # ==============================================
-# QUALITY SCORING (metric 11)
+# this contains the first demo code that contains all the functions in one file 
 # ==============================================
 
 def score_quality(original_prompt: str, response_text: str) -> dict:
@@ -69,9 +69,7 @@ exact format:
         return {"quality_score": None, "quality_reasoning": None}
 
 
-# ==============================================
-# SHARED METRIC HELPERS
-# ==============================================
+
 
 def compute_throughput(output_tokens, latency_ms):
     if not output_tokens or latency_ms is None or latency_ms <= 0:
@@ -108,9 +106,6 @@ def build_error_log(provider, model_name, prompt, latency_ms, error):
     }
 
 
-# ==============================================
-# GENERIC PROVIDER CALL
-# ==============================================
 
 def call_provider(provider_name: str, model_name: str, prompt: str) -> dict:
     start_time = time.perf_counter()

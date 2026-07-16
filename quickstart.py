@@ -1,27 +1,20 @@
 """
 Example usage of the LLM monitoring library.
-
-This is NOT a benchmark comparing providers against each other — it
-demonstrates how a developer would use LLMMonitor as a middleman
+it demonstrates how a developer would use LLMMonitor as a middleman
 around whichever single LLM their application actually uses.
-
-To switch provider/model, just change PROVIDER_NAME and MODEL below.
-Nothing else in the library needs to change.
-
+To switch provider/model, edit PROVIDER_NAME and MODEL in
+config/settings.py — that's the only place you need to change.
 Run with: python quickstart.py
 """
 
 import os
 
+from config.settings import PROVIDER_NAME, MODEL
 from core.monitor import LLMMonitor
 from core.logging_config import configure_logging, get_logger
 
 configure_logging()  # set up logging once, at the entry point
 logger = get_logger(__name__)
-
-# Change these two lines to use a different provider/model.
-PROVIDER_NAME = "gemini"
-MODEL = "gemini/gemini-3.5-flash"
 
 
 def log_result(result) -> None:

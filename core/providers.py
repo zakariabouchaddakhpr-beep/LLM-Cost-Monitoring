@@ -1,6 +1,6 @@
 """
 Handles calling each LLM provider through litellm and assembling the
-result log for each call (tokens, latency, cost, quality, etc).
+result log for each call (tokens, latency, cost, quality....).
 """
 
 import time
@@ -45,11 +45,10 @@ def _call_with_retries(model_name: str, prompt: str):
     Returns a tuple: (response, error_message, error_type, attempts_used).
     On success, error_message and error_type are None.
     On final failure (all retries exhausted), response is None.
-
     This lives in its own function because retrying is an instrumentation
-    concern (measuring/handling real-world call reliability), separate
-    from building the result log.
+    concern, separate from building the result log.
     """
+
     last_error = None
     last_error_type = None
 
@@ -75,8 +74,7 @@ def _call_with_retries(model_name: str, prompt: str):
 def call_provider(provider_name: str, model_name: str, prompt: str) -> dict:
     """
     Generic call used for every provider. Having one shared function
-    (instead of one copy-pasted block per provider) means every new
-    metric only needs to be added in one place.
+    means every new metric only needs to be added in one place.
     """
     start_time = time.perf_counter()
 
@@ -99,8 +97,6 @@ def call_provider(provider_name: str, model_name: str, prompt: str) -> dict:
     response_text = response.choices[0].message.content
 
     # Provider-assigned request ID, if exposed on the response object.
-    # Useful for cross-referencing this exact call against the
-    # provider's own dashboard/logs later.
     request_id = getattr(response, "id", None)
 
     try:

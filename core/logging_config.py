@@ -4,8 +4,7 @@ Central logging configuration.
 Instead of print() scattered across the codebase, every module gets a
 logger via get_logger(__name__), which:
 - tags each line with a timestamp, severity level, and module name
-- can be silenced or redirected (e.g. to a file, or filtered to
-  WARNING+ only in production) in ONE place, without touching any
+- can be silenced or redirected in ONE place, without touching any
   module that logs something
 """
 

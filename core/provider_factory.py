@@ -1,11 +1,9 @@
 """
-Factory pattern: given a provider name (a string), return an instance
+Factory pattern: given a provider name , return an instance
 of the correct provider class — without the caller needing to import
 or know about that specific class.
-
-This is what makes the library provider-agnostic: adding a new provider
-means writing one small adapter class and registering it here. Nothing
-in core/monitor.py, metrics.py, or quality_scoring.py needs to change.
+This is what makes the library provider-agnostic: adding a new provider means 
+writing one small adapter class and registering it here. Nothing needs to change.
 """
 
 from core.providers.openai_provider import OpenAIProvider
@@ -28,7 +26,6 @@ class LLMProviderFactory:
         """
         Returns a NEW instance of the requested provider.
         provider_kwargs are passed straight to the provider's constructor
-        (e.g. model="anthropic/claude-3-opus-..." to override the default).
         """
         provider_class = cls._providers.get(name)
         if not provider_class:

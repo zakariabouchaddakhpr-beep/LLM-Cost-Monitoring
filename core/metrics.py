@@ -1,8 +1,7 @@
 """
 Pure metric calculations. No API calls, no side effects — just math
 on numbers you already have. Kept separate so they're trivial to
-unit test (e.g. compute_throughput(100, 1000) == 100.0) without
-needing to mock any LLM calls.
+unit test without needing to mock any LLM calls.
 """
 
 

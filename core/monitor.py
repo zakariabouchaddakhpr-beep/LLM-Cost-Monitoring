@@ -2,14 +2,11 @@
 LLMMonitor is the middleman between a developer's app and whichever
 LLM provider they've chosen. It uses the Factory to get the right
 provider adapter, then wraps every call with uniform instrumentation:
-retries, latency, tokens, cost, throughput, and (optionally) a quality
-score — the exact same metrics regardless of whether the underlying
-call went to Claude, GPT, Gemini, Groq, or Cerebras.
-
+retries, latency, tokens, cost, throughput, and a quality score — the exact same metrics 
+regardless of whether the underlying call went to the providers.
 The result is built ONCE, as an LLMCallResult, right at the start of
 call(). Every step below just fills in more of its fields as data
-becomes available. There's a single return at the end (or an early
-return on failure) — never a second, separately-built dict/object.
+becomes available. There's a single return at the end
 """
 
 import time
@@ -34,9 +31,9 @@ def _preview(prompt: str) -> str:
 
 def _call_with_retries(provider, prompt: str):
     """
-    provider is an LLMProvider instance (any concrete adapter from the
-    Factory). Because every adapter implements .call(prompt) the same
-    way, this retry loop works identically no matter which provider
+    provider is an LLMProvider instance. 
+    Because every adapter implements .call(prompt) the same way, 
+    this retry loop works identically no matter which provider
     was actually chosen.
     """
     last_error = None
@@ -62,11 +59,9 @@ def _call_with_retries(provider, prompt: str):
 
 class LLMMonitor:
     """
-    Usage:
-        monitor = LLMMonitor(provider_name="anthropic", model="anthropic/claude-3-5-sonnet-20241022")
-        result = monitor.call("Explain the Factory pattern in 3 sentences.")
-
-    Swap provider_name/model to point at a different LLM entirely —
+    monitor = LLMMonitor(provider_name="provider", model="model")
+    result = monitor.call(prompt)
+    Swap provider_name/model to point at a different LLM entirely 
     every downstream metric (latency, cost, throughput, ...) is computed
     identically — the app code calling .call() never needs to change.
     """

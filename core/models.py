@@ -1,17 +1,7 @@
 """
 Structured result object for a single instrumented LLM call.
-
-Why a class instead of a plain dict:
-- The full set of fields is defined ONCE here, instead of being
-  copy-pasted as a dict literal in every place a result gets built
-  (previously: once for success, once for errors — easy to let them
-  drift apart).
-- Serialization (to_dict / to_json / save) lives with the data itself,
-  instead of ad-hoc json.dump() calls scattered in whichever script
-  happens to use the result.
-- Attribute access (result.total_tokens) instead of dict access
-  (result["total_tokens"]) catches typos at development time in most
-  editors/IDEs, instead of failing silently or crashing at runtime.
+Why a class instead of a plain dict, The full set of fields is defined ONCE here, 
+instead of being copy-pasted as a dict literal in every place a result gets built
 """
 
 from dataclasses import dataclass, asdict
