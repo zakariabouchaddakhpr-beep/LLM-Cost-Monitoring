@@ -5,6 +5,11 @@ provider adapter, then wraps every call with uniform instrumentation:
 retries, latency, tokens, cost, throughput, and (optionally) a quality
 score — the exact same metrics regardless of whether the underlying
 call went to Claude, GPT, Gemini, Groq, or Cerebras.
+
+The result is built ONCE, as an LLMCallResult, right at the start of
+call(). Every step below just fills in more of its fields as data
+becomes available. There's a single return at the end (or an early
+return on failure) — never a second, separately-built dict/object.
 """
 
 import time
@@ -17,31 +22,14 @@ from config.settings import MAX_RETRIES, RETRY_BACKOFF_SECONDS
 from core.metrics import compute_throughput, compute_cost_efficiency
 from core.quality_scoring import score_quality
 from core.provider_factory import LLMProviderFactory
+from core.models import LLMCallResult
+from core.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
-def build_error_log(provider_name, model_name, prompt, latency_ms, error, error_type, attempts_used):
-    return {
-        "provider": provider_name,
-        "trace_id": str(uuid.uuid4()),
-        "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
-        "model": model_name,
-        "prompt_preview": prompt[:100] + ("..." if len(prompt) > 100 else ""),
-        "response_preview": None,
-        "input_tokens": None,
-        "output_tokens": None,
-        "total_tokens": None,
-        "finish_reason": None,
-        "latency_ms": latency_ms,
-        "tokens_per_second": None,
-        "cost_usd": None,
-        "quality_score": None,
-        "quality_reasoning": None,
-        "cost_efficiency": None,
-        "request_id": None,
-        "attempts_used": attempts_used,
-        "error_type": error_type,
-        "error": error
-    }
+def _preview(prompt: str) -> str:
+    return prompt[:100] + ("..." if len(prompt) > 100 else "")
 
 
 def _call_with_retries(provider, prompt: str):
@@ -63,8 +51,10 @@ def _call_with_retries(provider, prompt: str):
             last_error_type = type(e).__name__
             if attempt <= MAX_RETRIES:
                 backoff = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
-                print(f"   ...retry {attempt}/{MAX_RETRIES} after {last_error_type}, "
-                      f"waiting {backoff}s")
+                logger.warning(
+                    "Retry %d/%d after %s, waiting %.2fs",
+                    attempt, MAX_RETRIES, last_error_type, backoff
+                )
                 time.sleep(backoff)
 
     return None, last_error, last_error_type, MAX_RETRIES + 1
@@ -73,73 +63,70 @@ def _call_with_retries(provider, prompt: str):
 class LLMMonitor:
     """
     Usage:
-        monitor = LLMMonitor(provider_name="anthropic")
+        monitor = LLMMonitor(provider_name="anthropic", model="anthropic/claude-3-5-sonnet-20241022")
         result = monitor.call("Explain the Factory pattern in 3 sentences.")
 
-    Swap provider_name to "openai", "gemini", "groq", or "cerebras" and
+    Swap provider_name/model to point at a different LLM entirely —
     every downstream metric (latency, cost, throughput, ...) is computed
     identically — the app code calling .call() never needs to change.
     """
 
-    def __init__(self, provider_name: str, **provider_kwargs):
+    def __init__(self, provider_name: str, model: str, **provider_kwargs):
         self.provider_name = provider_name
-        self.provider = LLMProviderFactory.get_provider(provider_name, **provider_kwargs)
+        self.provider = LLMProviderFactory.get_provider(provider_name, model=model, **provider_kwargs)
+        logger.info("LLMMonitor initialized for provider=%s model=%s",
+                    provider_name, self.provider.get_model_string())
 
-    def call(self, prompt: str, score_response_quality: bool = True) -> dict:
-        model_name = self.provider.get_model_string()
+    def call(self, prompt: str, score_response_quality: bool = True) -> LLMCallResult:
+        # Built once, right away, with everything we already know.
+        # Every step below fills in more fields on this SAME object.
+        result = LLMCallResult(
+            provider=self.provider_name,
+            trace_id=str(uuid.uuid4()),
+            timestamp=datetime.now(timezone.utc).isoformat() + "Z",
+            model=self.provider.get_model_string(),
+            prompt_preview=_preview(prompt),
+        )
 
         start_time = time.perf_counter()
         response, error, error_type, attempts_used = _call_with_retries(self.provider, prompt)
-        end_time = time.perf_counter()
-        latency_ms = (end_time - start_time) * 1000
+        result.latency_ms = (time.perf_counter() - start_time) * 1000
+        result.attempts_used = attempts_used
 
         if error:
-            print(f" ERREUR {self.provider_name} : {error}")
-            return build_error_log(self.provider_name, model_name, prompt,
-                                    latency_ms, error, error_type, attempts_used)
+            result.error = error
+            result.error_type = error_type
+            logger.error("Call to %s failed: %s", self.provider_name, error)
+            return result
 
         usage = response.usage
-        input_tokens = usage.prompt_tokens
-        output_tokens = usage.completion_tokens
-        total_tokens = usage.total_tokens
-
-        finish_reason = response.choices[0].finish_reason
-        response_text = response.choices[0].message.content
-        request_id = getattr(response, "id", None)
+        result.input_tokens = usage.prompt_tokens
+        result.output_tokens = usage.completion_tokens
+        result.total_tokens = usage.total_tokens
+        result.finish_reason = response.choices[0].finish_reason
+        result.response_preview = response.choices[0].message.content
+        result.request_id = getattr(response, "id", None)
 
         try:
-            total_cost_usd = litellm.completion_cost(response)
+            cost = litellm.completion_cost(response)
+            result.cost_usd = round(cost, 8) if cost is not None else None
         except Exception:
-            total_cost_usd = None
+            result.cost_usd = None
+            logger.warning("Could not compute cost for model=%s", result.model)
 
-        tokens_per_second = compute_throughput(output_tokens, latency_ms)
+        result.tokens_per_second = compute_throughput(result.output_tokens, result.latency_ms)
 
         if score_response_quality:
-            quality = score_quality(prompt, response_text)
-        else:
-            quality = {"quality_score": None, "quality_reasoning": None}
+            quality = score_quality(prompt, result.response_preview)
+            result.quality_score = quality["quality_score"]
+            result.quality_reasoning = quality["quality_reasoning"]
 
-        cost_efficiency = compute_cost_efficiency(quality["quality_score"], total_cost_usd)
+        result.cost_efficiency = compute_cost_efficiency(result.quality_score, result.cost_usd)
 
-        return {
-            "provider": self.provider_name,
-            "trace_id": str(uuid.uuid4()),
-            "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
-            "model": model_name,
-            "prompt_preview": prompt[:100] + ("..." if len(prompt) > 100 else ""),
-            "response_preview": response_text,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "total_tokens": total_tokens,
-            "finish_reason": finish_reason,
-            "latency_ms": latency_ms,
-            "tokens_per_second": tokens_per_second,
-            "cost_usd": round(total_cost_usd, 8) if total_cost_usd is not None else None,
-            "quality_score": quality["quality_score"],
-            "quality_reasoning": quality["quality_reasoning"],
-            "cost_efficiency": cost_efficiency,
-            "request_id": request_id,
-            "attempts_used": attempts_used,
-            "error_type": None,
-            "error": None
-        }
+        logger.info(
+            "Call succeeded provider=%s tokens=%d latency_ms=%.1f cost_usd=%s attempts=%d",
+            self.provider_name, result.total_tokens, result.latency_ms,
+            result.cost_usd, result.attempts_used
+        )
+
+        return result
