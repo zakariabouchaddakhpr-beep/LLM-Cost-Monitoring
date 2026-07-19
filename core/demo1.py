@@ -9,7 +9,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 JUDGE_MODEL = "groq/llama-3.3-70b-versatile"
-
+DEFAULT_MODELS = {
+    "openai": "openai/gpt-4o-mini",
+    "anthropic": "anthropic/claude-3-5-sonnet-20241022",
+    "gemini": "gemini/gemini-3.5-flash",
+    "groq": "groq/llama-3.3-70b-versatile",
+    "cerebras": "cerebras/gpt-oss-120b",
+}
 
 # ==============================================
 # this contains the first demo code that contains all the functions in one file 
