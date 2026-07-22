@@ -1,7 +1,5 @@
 """
-Pure metric calculations. No API calls, no side effects — just math
-on numbers you already have. Kept separate so they're trivial to
-unit test without needing to mock any LLM calls.
+Pure metric calculations
 """
 
 

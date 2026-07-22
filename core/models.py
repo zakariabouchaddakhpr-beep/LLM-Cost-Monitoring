@@ -1,7 +1,5 @@
 """
 Structured result object for a single instrumented LLM call.
-Why a class instead of a plain dict? The full set of fields is defined ONCE here,
-instead of being copy-pasted as a dict literal in every place a result gets built.
 """
 
 from dataclasses import dataclass, asdict

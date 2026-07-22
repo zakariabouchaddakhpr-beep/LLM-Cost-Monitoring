@@ -1,3 +1,5 @@
+# this contains the first demo code that contains all the functions in one file 
+
 import time
 import json
 import uuid
@@ -17,9 +19,7 @@ DEFAULT_MODELS = {
     "cerebras": "cerebras/gpt-oss-120b",
 }
 
-# ==============================================
-# this contains the first demo code that contains all the functions in one file 
-# ==============================================
+
 
 def score_quality(original_prompt: str, response_text: str) -> dict:
     """
