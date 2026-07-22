@@ -1,2 +1,15 @@
-litellm
-python-dotenv
+# Core LLM calling
+litellm>=1.40.0
+
+# OpenTelemetry (GenAI Semantic Conventions)
+opentelemetry-api>=1.25.0
+opentelemetry-sdk>=1.25.0
+opentelemetry-exporter-otlp>=1.25.0
+opentelemetry-semantic-conventions>=0.46b0
+
+# Persistence
+duckdb>=1.0.0
+pandas>=2.0.0
+
+# Config
+python-dotenv>=1.0.0

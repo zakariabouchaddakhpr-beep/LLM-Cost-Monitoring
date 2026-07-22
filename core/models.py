@@ -1,7 +1,7 @@
 """
 Structured result object for a single instrumented LLM call.
-Why a class instead of a plain dict, The full set of fields is defined ONCE here, 
-instead of being copy-pasted as a dict literal in every place a result gets built
+Why a class instead of a plain dict? The full set of fields is defined ONCE here,
+instead of being copy-pasted as a dict literal in every place a result gets built.
 """
 
 from dataclasses import dataclass, asdict
@@ -11,26 +11,45 @@ import json
 
 @dataclass
 class LLMCallResult:
+    # Core identity
     provider: str
     trace_id: str
     timestamp: str
     model: str
     prompt_preview: str
+
+    # Response content
     response_preview: Optional[str] = None
+
+    # Token usage
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
+
+    # Lifecycle
     finish_reason: Optional[str] = None
     latency_ms: Optional[float] = None
     tokens_per_second: Optional[float] = None
+    attempts_used: Optional[int] = None
+
+    # Cost & quality
     cost_usd: Optional[float] = None
     quality_score: Optional[int] = None
     quality_reasoning: Optional[str] = None
     cost_efficiency: Optional[float] = None
+
+    # Provider correlation
     request_id: Optional[str] = None
-    attempts_used: Optional[int] = None
     error_type: Optional[str] = None
     error: Optional[str] = None
+
+    # OTel correlation (filled by the instrumentation layer)
+    span_id: Optional[str] = None
+    trace_otel_id: Optional[str] = None
+
+    # Cost attribution (filled by caller for multi-tenant / multi-use-case tracking)
+    tenant_id: Optional[str] = None
+    use_case: Optional[str] = None
 
     @property
     def succeeded(self) -> bool:

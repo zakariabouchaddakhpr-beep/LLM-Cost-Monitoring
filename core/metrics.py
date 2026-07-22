@@ -21,3 +21,4 @@ def compute_cost_efficiency(quality_score, cost_usd):
     if quality_score is None or cost_usd is None or cost_usd <= 0:
         return None
     return round(quality_score / cost_usd, 4)
+    

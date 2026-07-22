@@ -11,5 +11,5 @@ COPY . .
 # so a bind-mounted volume (see docker-compose.yml) has somewhere to attach.
 RUN mkdir -p results
 
-# Run the benchmark when the container starts
-CMD ["python", "main.py"]
+# Run the example when the container starts
+CMD ["python", "quickstart.py"]
