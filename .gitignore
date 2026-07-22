@@ -1,0 +1,20 @@
+# Secrets — never commit these
+.env
+
+# Python cache/build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Virtual environments
+venv/
+.venv/
+
+# Local benchmark output — generated at runtime, not source code
+results/
+
+# OS/editor clutter
+.DS_Store
+.vscode/
+.idea/
