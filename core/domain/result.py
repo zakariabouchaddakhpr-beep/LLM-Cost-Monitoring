@@ -1,7 +1,8 @@
 """
-Structured result object for a single instrumented LLM call.
-Why a class instead of a plain dict? The full set of fields is defined ONCE here,
-instead of being copy-pasted as a dict literal in every place a result gets built.
+Domain entities — pure business objects with no external dependencies.
+
+These are the central types that every layer (application, infrastructure)
+agrees on. They know nothing about databases, HTTP, or observability.
 """
 
 from dataclasses import dataclass, asdict
@@ -11,6 +12,8 @@ import json
 
 @dataclass
 class LLMCallResult:
+    """Structured result object for a single instrumented LLM call."""
+
     # Core identity
     provider: str
     trace_id: str
@@ -62,7 +65,6 @@ class LLMCallResult:
         return json.dumps(self.to_dict(), indent=indent, ensure_ascii=False)
 
     def save(self, path: str) -> None:
-        """Writes this result to disk as JSON. Owns its own file format,
-        so callers never need to know it's JSON under the hood."""
+        """Writes this result to disk as JSON."""
         with open(path, "w", encoding="utf-8") as f:
             f.write(self.to_json())

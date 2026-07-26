@@ -1,0 +1,14 @@
+﻿apiVersion: 1
+
+datasources:
+  - name: DuckDB
+    type: marcusolsson-json-datasource
+    access: proxy
+    isDefault: true
+    editable: true
+    url: http://llm-monitor:8001/metrics
+    jsonData:
+      httpMethod: GET
+      httpHeaderName1: "X-Requested-With"
+    secureJsonData:
+      httpHeaderValue1: "XMLHttpRequest"

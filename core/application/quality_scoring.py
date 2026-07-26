@@ -13,7 +13,7 @@ def score_quality(original_prompt: str, response_text: str) -> dict:
     Uses a judge LLM to rate a response from 1 to 10 on relevance,
     clarity, and completeness relative to the original prompt.
     Returns a dict with the score and short reasoning, or None values
-    if judging itself fails
+    if judging itself fails.
     """
     if not response_text:
         return {"quality_score": None, "quality_reasoning": None}
@@ -56,5 +56,4 @@ exact format:
         return {"quality_score": score, "quality_reasoning": reasoning}
 
     except Exception as e:
-        print(f" ATTENTION : scoring qualité échoué - {e}")
         return {"quality_score": None, "quality_reasoning": None}

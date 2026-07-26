@@ -15,8 +15,7 @@ load_dotenv()
 # Model used as the "judge" to score response quality (optional feature).
 JUDGE_MODEL = "groq/llama-3.3-70b-versatile"
 
-# Instrumentation-layer retry behavior for transient failures
-# (rate limits, brief timeouts, connection blips).
+
 MAX_RETRIES = 2              # number of retries AFTER the first attempt
 RETRY_BACKOFF_SECONDS = 1.5  # base delay, doubled on each subsequent retry
 

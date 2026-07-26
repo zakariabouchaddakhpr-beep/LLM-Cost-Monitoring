@@ -1,9 +1,8 @@
 """
 LLMMonitor is the middleman between a developer's app and whichever
-LLM provider they've chosen. It uses the Factory to get the right
-provider adapter, then wraps every call with uniform instrumentation:
-retries, latency, tokens, cost, throughput, and a quality score — the exact same metrics
-regardless of whether the underlying call went to the providers.
+LLM provider they've chosen. It wraps every call with uniform
+instrumentation: retries, latency, tokens, cost, throughput, and a quality
+score — the exact same metrics regardless of which provider answered.
 
 OpenTelemetry GenAI Semantic Conventions (2026):
 - Span name: "chat {provider}" (e.g. "chat openai")
@@ -11,10 +10,6 @@ OpenTelemetry GenAI Semantic Conventions (2026):
   gen_ai.usage.output_tokens, gen_ai.operation.name
 - Metrics: gen_ai.client.token.usage (counter), gen_ai.client.operation.duration (histogram),
   llm.cost.usd (histogram)
-
-The result is built ONCE, as an LLMCallResult, right at the start of
-call(). Every step below just fills in more of its fields as data
-becomes available. There's a single return at the end.
 """
 
 import time
@@ -24,12 +19,12 @@ from datetime import datetime, timezone
 import litellm
 
 from config.settings import MAX_RETRIES, RETRY_BACKOFF_SECONDS
-from core.metrics import compute_throughput, compute_cost_efficiency
-from core.quality_scoring import score_quality
-from core.provider_factory import LLMProviderFactory
-from core.models import LLMCallResult
+from core.domain.metrics import compute_throughput, compute_cost_efficiency
+from core.domain.result import LLMCallResult
+from core.application.quality_scoring import score_quality
+from core.infrastructure.provider import LiteLLMProvider
+from core.infrastructure.otel import get_tracer, get_meter
 from core.logging_config import get_logger
-from core.otel_setup import get_tracer, get_meter
 
 logger = get_logger(__name__)
 
@@ -61,12 +56,7 @@ def _preview(prompt: str) -> str:
 
 
 def _call_with_retries(provider, prompt: str):
-    """
-    provider is an LLMProvider instance.
-    Because every adapter implements .call(prompt) the same way,
-    this retry loop works identically no matter which provider
-    was actually chosen.
-    """
+    """Retry loop with exponential backoff."""
     last_error = None
     last_error_type = None
 
@@ -90,16 +80,13 @@ def _call_with_retries(provider, prompt: str):
 
 class LLMMonitor:
     """
-    monitor = LLMMonitor(provider_name="provider", model="model")
+    monitor = LLMMonitor(provider_name="openai", model="openai/gpt-4o")
     result = monitor.call(prompt)
-    Swap provider_name/model to point at a different LLM entirely —
-    every downstream metric (latency, cost, throughput, ...) is computed
-    identically — the app code calling .call() never needs to change.
     """
 
-    def __init__(self, provider_name: str, model: str, **provider_kwargs):
+    def __init__(self, provider_name: str, model: str):
         self.provider_name = provider_name
-        self.provider = LLMProviderFactory.get_provider(provider_name, model=model, **provider_kwargs)
+        self.provider = LiteLLMProvider(model)
         logger.info("LLMMonitor initialized for provider=%s model=%s",
                     provider_name, self.provider.get_model_string())
 
@@ -110,13 +97,10 @@ class LLMMonitor:
         with tracer.start_as_current_span(f"chat {self.provider_name}") as span:
             from opentelemetry.trace import Status, StatusCode
 
-            # GenAI semantic convention attributes (always set)
             span.set_attribute("gen_ai.operation.name", "chat")
             span.set_attribute("gen_ai.system", self.provider_name)
             span.set_attribute("gen_ai.request.model", self.provider.get_model_string())
 
-            # Built once, right away, with everything we already know.
-            # Every step below fills in more fields on this SAME object.
             result = LLMCallResult(
                 provider=self.provider_name,
                 trace_id=str(uuid.uuid4()),
@@ -127,7 +111,6 @@ class LLMMonitor:
                 use_case=use_case,
             )
 
-            # Capture OTel correlation IDs from the current span context
             ctx = span.get_span_context()
             if ctx.is_valid:
                 result.span_id = format(ctx.span_id, "016x")
@@ -155,7 +138,6 @@ class LLMMonitor:
             result.response_preview = response.choices[0].message.content
             result.request_id = getattr(response, "id", None)
 
-            # GenAI semantic convention: token usage on span
             span.set_attribute("gen_ai.usage.input_tokens", result.input_tokens)
             span.set_attribute("gen_ai.usage.output_tokens", result.output_tokens)
 
@@ -175,7 +157,6 @@ class LLMMonitor:
 
             result.cost_efficiency = compute_cost_efficiency(result.quality_score, result.cost_usd)
 
-            # Emit OTel metrics
             otel = _get_otel_metrics()
             otel["op_duration"].record(result.latency_ms, {
                 "gen_ai.system": self.provider_name,

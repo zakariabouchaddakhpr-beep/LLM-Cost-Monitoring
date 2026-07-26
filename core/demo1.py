@@ -1,3 +1,5 @@
+# this contains the first demo code that contains all the functions in one file 
+
 import time
 import json
 import uuid
@@ -17,9 +19,7 @@ DEFAULT_MODELS = {
     "cerebras": "cerebras/gpt-oss-120b",
 }
 
-# ==============================================
-# this contains the first demo code that contains all the functions in one file 
-# ==============================================
+
 
 def score_quality(original_prompt: str, response_text: str) -> dict:
     """
@@ -54,8 +54,7 @@ exact format:
         )
         raw = judge_response.choices[0].message.content.strip()
 
-        # Defensive cleanup in case the judge wraps output in code fences
-        # despite instructions not to.
+        
         if raw.startswith("```"):
             raw = raw.strip("`")
             if raw.lower().startswith("json"):
@@ -65,7 +64,7 @@ exact format:
         score = int(parsed.get("score"))
         reasoning = parsed.get("reasoning")
 
-        # Clamp defensively in case the judge ignores the range.
+    
         score = max(1, min(10, score))
 
         return {"quality_score": score, "quality_reasoning": reasoning}

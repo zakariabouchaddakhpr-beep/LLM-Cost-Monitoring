@@ -1,12 +1,12 @@
-"""Unit tests for core/metrics.py — pure math, no mocks needed."""
+"""Unit tests for core/domain/metrics.py — pure math, no mocks needed."""
 
 import pytest
-from core.metrics import compute_throughput, compute_cost_efficiency
+from core.domain.metrics import compute_throughput, compute_cost_efficiency
 
 
 class TestComputeThroughput:
     def test_basic(self):
-        assert compute_throughput(100, 2000) == 50.0  # 100 tok / 2 s
+        assert compute_throughput(100, 2000) == 50.0
 
     def test_zero_latency(self):
         assert compute_throughput(100, 0) is None

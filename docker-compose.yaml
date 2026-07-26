@@ -1,9 +1,36 @@
 services:
-  llm-benchmark:
+  llm-monitor:
     build: .
-    container_name: llm_monitor
+    container_name: llm-monitor
     env_file:
       - .env
+    environment:
+      # Inside the container, DuckDB should write to the mounted volume
+      - DUCKDB_PATH=/app/results/llm_traces.duckdb
     volumes:
-      # Persist results on the host machine even after the container exits
+      # Persist results (JSON logs + DuckDB) on the host even after container exits
       - ./results:/app/results
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import duckdb; duckdb.connect('/app/results/llm_traces.duckdb')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - grafana-storage:/var/lib/grafana
+    restart: unless-stopped
+
+volumes:
+  grafana-storage:

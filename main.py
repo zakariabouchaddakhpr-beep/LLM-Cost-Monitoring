@@ -1,20 +1,50 @@
 """
 Example usage of the LLM monitoring library.
 
-This demonstrates:
+Demonstrates:
 1. Calling an LLM through LLMMonitor with OTel tracing
-2. Saving results to DuckDB for persistence and analytics
+2. Saving results to DuckDB (via SQLAlchemy ORM) for persistence
 3. Querying aggregated cost and latency views
-
-To switch provider/model, edit the PROVIDER_NAME and MODEL constants below.
-
-Run with: python quickstart.py
 """
 
+import importlib.util
 import os
+import subprocess
+import sys
+import time
+from pathlib import Path
 
-from core.monitor import LLMMonitor
-from core.trace_store import TraceStore
+
+def _ensure_runtime_dependencies(requirements_path: str | Path | None = None) -> None:
+    requirements_file = Path(requirements_path or Path(__file__).with_name("requirements.txt"))
+    if not requirements_file.exists():
+        return
+
+    missing = []
+    for module_name in ["litellm", "pandas", "sqlalchemy", "duckdb", "dotenv", "opentelemetry"]:
+        if importlib.util.find_spec(module_name) is None:
+            missing.append(module_name)
+
+    if missing:
+        try:
+            subprocess.check_call([
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "-r",
+                str(requirements_file),
+            ])
+        except subprocess.CalledProcessError:
+            # Keep the app usable even if the bootstrap install is not possible in the current shell.
+            pass
+
+
+_ensure_runtime_dependencies()
+
+from core.application.metrics_api import serve_forever
+from core.application.monitor import LLMMonitor
+from core.infrastructure.persistence import TraceRepository
 from core.logging_config import configure_logging, get_logger
 
 configure_logging()
@@ -39,8 +69,13 @@ def log_result(result) -> None:
 
 
 def main():
+    import threading
+
+    metrics_thread = threading.Thread(target=serve_forever, daemon=False)
+    metrics_thread.start()
+
     monitor = LLMMonitor(provider_name="gemini", model="gemini/gemini-3.5-flash")
-    store = TraceStore()
+    repo = TraceRepository()
 
     prompts = [
         ("Explain the Factory design pattern in 3 sentences.", "docs", "tutorial"),
@@ -55,34 +90,34 @@ def main():
         results.append(result)
         log_result(result)
 
-    # Persist all traces to DuckDB
-    store.save_many(results)
+    repo.save_many(results)
     logger.info("Saved %d traces to DuckDB", len(results))
 
-    # Show aggregated views
     logger.info("--- Cost by Tenant ---")
-    for row in store.query("SELECT * FROM v_cost_by_tenant"):
+    for row in repo.query("SELECT * FROM v_cost_by_tenant"):
         logger.info("tenant=%s calls=%s total_cost=%.6f", row[0], row[1], row[2])
 
     logger.info("--- Cost by Use Case ---")
-    for row in store.query("SELECT * FROM v_cost_by_use_case"):
+    for row in repo.query("SELECT * FROM v_cost_by_use_case"):
         logger.info("use_case=%s calls=%s total_cost=%.6f avg_quality=%.1f", row[0], row[1], row[2], row[4])
 
     logger.info("--- Latency Percentiles ---")
-    for row in store.query("SELECT * FROM v_latency_percentiles"):
+    for row in repo.query("SELECT * FROM v_latency_percentiles"):
         logger.info("provider=%s model=%s p50=%.1fms p90=%.1fms p99=%.1fms", row[0], row[1], row[3], row[4], row[5])
 
-    # Summary
-    summary = store.get_summary()
+    summary = repo.get_summary()
     logger.info("Overall summary: calls=%d cost=$%.6f avg_latency=%.1fms",
                 summary["total_calls"], summary["total_cost_usd"], summary["avg_latency_ms"])
 
-    # Also save to JSON for compatibility
     os.makedirs("results", exist_ok=True)
     for i, result in enumerate(results):
         result.save(os.path.join("results", f"call_log_{i}.json"))
 
-    store.close()
+    repo.close()
+
+    logger.info("Metrics endpoint available at http://llm-monitor:8001/metrics")
+    while True:
+        time.sleep(60)
 
 
 if __name__ == "__main__":
