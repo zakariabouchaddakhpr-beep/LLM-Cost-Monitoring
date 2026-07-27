@@ -16,4 +16,7 @@ pandas>=2.0.0
 # Config
 python-dotenv>=1.0.0
 
+# Web dashboard
+streamlit>=1.30.0
+
 

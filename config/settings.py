@@ -10,7 +10,12 @@ that actually decides which LLM is being called for a given run.
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+try:
+    load_dotenv()
+except OSError:
+    # If a local .env file cannot be read (for example, a OneDrive placeholder
+    # file that is not downloaded), continue with environment variables.
+    pass
 
 # Model used as the "judge" to score response quality (optional feature).
 JUDGE_MODEL = "groq/llama-3.3-70b-versatile"

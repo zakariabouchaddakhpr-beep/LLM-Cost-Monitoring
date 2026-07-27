@@ -2,13 +2,39 @@
 SQLAlchemy engine and session factory for DuckDB.
 """
 
-import os
+import tempfile
+import logging
 from pathlib import Path
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from config.settings import DUCKDB_PATH
+
+logger = logging.getLogger(__name__)
+
+
+def _is_file_accessible(path_obj: Path) -> bool:
+    if not path_obj.exists():
+        return True
+    try:
+        with path_obj.open("rb"):
+            pass
+        return True
+    except OSError:
+        return False
+
+
+def _fallback_path(target_path: Path) -> str:
+    fallback_dir = Path(tempfile.gettempdir()) / "llm_cost_monitor"
+    fallback_dir.mkdir(parents=True, exist_ok=True)
+    fallback_path = fallback_dir / target_path.name
+    logger.warning(
+        "DuckDB path %s is not accessible; falling back to %s",
+        target_path,
+        fallback_path,
+    )
+    return str(fallback_path)
 
 
 def _ensure_dir(path: str | None) -> str:
@@ -22,7 +48,14 @@ def _ensure_dir(path: str | None) -> str:
     else:
         target_path = Path.cwd() / path_obj
 
-    target_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return _fallback_path(target_path)
+
+    if not _is_file_accessible(target_path):
+        return _fallback_path(target_path)
+
     return str(target_path)
 
 

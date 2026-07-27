@@ -2,6 +2,8 @@
 
 import os
 import tempfile
+from pathlib import Path
+
 import pytest
 from datetime import datetime, timezone
 
@@ -67,6 +69,21 @@ class TestSave:
             repo.save(_make_result())
             rows = repo.query("SELECT COUNT(*) FROM llm_traces")
             assert rows[0][0] == 1
+        finally:
+            repo.close()
+            database_module.DUCKDB_PATH = original_path
+
+    def test_falls_back_to_temp_dir_when_db_path_unreadable(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "bad.duckdb"
+        original_path = database_module.DUCKDB_PATH
+        database_module.DUCKDB_PATH = str(db_path)
+        monkeypatch.setattr(database_module, "_is_file_accessible", lambda path_obj: False)
+        try:
+            repo = TraceRepository()
+            engine_path = Path(repo._engine.url.database)
+            assert engine_path != db_path
+            assert engine_path.name == db_path.name
+            assert "llm_cost_monitor" in str(engine_path.parent)
         finally:
             repo.close()
             database_module.DUCKDB_PATH = original_path

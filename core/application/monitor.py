@@ -12,9 +12,13 @@ OpenTelemetry GenAI Semantic Conventions (2026):
   llm.cost.usd (histogram)
 """
 
+import os
 import time
 import uuid
 from datetime import datetime, timezone
+
+if "LITELLM_MODE" not in os.environ:
+    os.environ["LITELLM_MODE"] = "PRODUCTION"
 
 import litellm
 

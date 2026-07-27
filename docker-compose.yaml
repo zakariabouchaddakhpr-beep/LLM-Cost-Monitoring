@@ -18,19 +18,16 @@ services:
       retries: 3
       start_period: 10s
 
-  grafana:
-    image: grafana/grafana-oss:latest
-    container_name: grafana
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+  streamlit:
+    build: .
+    container_name: llm-monitor-dashboard
+    command: ["streamlit", "run", "streamlit_app.py", "--server.address", "0.0.0.0", "--server.port", "8501", "--server.headless", "true"]
+    env_file:
+      - .env
     volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning
-      - grafana-storage:/var/lib/grafana
+      - ./results:/app/results
+    ports:
+      - "8501:8501"
+    depends_on:
+      - llm-monitor
     restart: unless-stopped
-
-volumes:
-  grafana-storage:

@@ -129,6 +129,7 @@ That's it. The container will:
 2. Run `quickstart.py` which calls the LLM and saves traces
 3. Persist results to `./results/` on your host (JSON + DuckDB file)
 4. Print OTel spans and metrics to the console
+5. Expose a Streamlit dashboard at http://localhost:8501 for exploring cost, latency, and quality analytics
 
 ### What's inside the image
 
@@ -204,11 +205,11 @@ docker compose up --build
 Results still land in `./results/` on your host machine via the volume
 mount in `docker-compose.yml`.
 
-## Grafana
+## Streamlit dashboard
 
-A local Grafana instance is available through Docker at http://localhost:3000 with the default login `admin / admin`.
+A local Streamlit dashboard is available through Docker at http://localhost:8501.
 
-The compose file now provisions a starter dashboard and datasource config from the [grafana/provisioning](grafana/provisioning) folder.
+The dashboard reads directly from the persisted DuckDB file at `./results/llm_traces.duckdb` and provides built-in cost, latency, and quality analytics.
 
 ## OpenTelemetry
 

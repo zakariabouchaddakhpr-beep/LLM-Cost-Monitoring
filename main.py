@@ -7,7 +7,7 @@ Demonstrates:
 3. Querying aggregated cost and latency views
 """
 
-import importlib.util
+import importlib
 import os
 import subprocess
 import sys
@@ -16,39 +16,88 @@ from pathlib import Path
 
 
 def _ensure_runtime_dependencies(requirements_path: str | Path | None = None) -> None:
+    os.environ.setdefault("LITELLM_MODE", "PRODUCTION")
+
     requirements_file = Path(requirements_path or Path(__file__).with_name("requirements.txt"))
     if not requirements_file.exists():
         return
 
+    runtime_imports = [
+        "litellm.types.integrations.datadog",
+        "pandas",
+        "sqlalchemy",
+        "duckdb",
+        "dotenv",
+        "opentelemetry",
+    ]
     missing = []
-    for module_name in ["litellm", "pandas", "sqlalchemy", "duckdb", "dotenv", "opentelemetry"]:
-        if importlib.util.find_spec(module_name) is None:
+    for module_name in runtime_imports:
+        try:
+            importlib.import_module(module_name)
+        except Exception:
             missing.append(module_name)
 
-    if missing:
+    if not missing:
+        return
+
+    install_command = [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "-r",
+        str(requirements_file),
+    ]
+    try:
+        subprocess.check_call(install_command)
+    except subprocess.CalledProcessError as first_error:
+        print(
+            "Failed to install runtime dependencies. Retrying with force-reinstall...",
+            file=sys.stderr,
+        )
         try:
             subprocess.check_call([
                 sys.executable,
                 "-m",
                 "pip",
                 "install",
+                "--ignore-installed",
+                "--force-reinstall",
                 "-r",
                 str(requirements_file),
             ])
         except subprocess.CalledProcessError:
+            print(
+                "Runtime dependency bootstrap failed. Please install requirements manually:",
+                file=sys.stderr,
+            )
+            print(
+                f"{sys.executable} -m pip install -r {requirements_file}",
+                file=sys.stderr,
+            )
             # Keep the app usable even if the bootstrap install is not possible in the current shell.
             pass
 
 
-_ensure_runtime_dependencies()
+logger = None
+serve_forever = None
+LLMMonitor = None
+TraceRepository = None
 
-from core.application.metrics_api import serve_forever
-from core.application.monitor import LLMMonitor
-from core.infrastructure.persistence import TraceRepository
-from core.logging_config import configure_logging, get_logger
 
-configure_logging()
-logger = get_logger(__name__)
+def _configure_application() -> None:
+    global logger, serve_forever, LLMMonitor, TraceRepository
+
+    from core.application.metrics_api import serve_forever as _serve_forever
+    from core.application.monitor import LLMMonitor as _LLMMonitor
+    from core.infrastructure.persistence import TraceRepository as _TraceRepository
+    from core.logging_config import configure_logging, get_logger
+
+    configure_logging()
+    logger = get_logger(__name__)
+    serve_forever = _serve_forever
+    LLMMonitor = _LLMMonitor
+    TraceRepository = _TraceRepository
 
 
 def log_result(result) -> None:
@@ -69,6 +118,9 @@ def log_result(result) -> None:
 
 
 def main():
+    _ensure_runtime_dependencies()
+    _configure_application()
+
     import threading
 
     metrics_thread = threading.Thread(target=serve_forever, daemon=False)
