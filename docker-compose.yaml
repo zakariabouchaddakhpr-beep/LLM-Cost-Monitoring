@@ -5,10 +5,8 @@ services:
     env_file:
       - .env
     environment:
-      # Inside the container, DuckDB should write to the mounted volume
       - DUCKDB_PATH=/app/results/llm_traces.duckdb
     volumes:
-      # Persist results (JSON logs + DuckDB) on the host even after container exits
       - ./results:/app/results
     restart: unless-stopped
     healthcheck:

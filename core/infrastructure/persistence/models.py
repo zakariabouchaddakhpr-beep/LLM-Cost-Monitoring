@@ -1,7 +1,5 @@
 """
 SQLAlchemy ORM models for LLM trace persistence.
-
-Uses declarative base (SQLAlchemy 2.0 style) mapped to DuckDB.
 """
 
 from datetime import datetime

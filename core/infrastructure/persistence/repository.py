@@ -1,8 +1,8 @@
 """
 Repository for LLM trace persistence.
 
-Replaces the old hard-coded SQL TraceStore with SQLAlchemy ORM
-operations. All CRUD goes through the ORM; analytics views are still
+SQLAlchemy ORM operations. All CRUD goes through the ORM; 
+analytics views are still
 DuckDB-native (created on init) and queried via SQL.
 """
 

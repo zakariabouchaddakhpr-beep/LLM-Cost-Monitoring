@@ -1,6 +1,5 @@
 """
 Pre-built analytics views for the DuckDB persistence layer.
-
 Views are created via raw DDL because SQLAlchemy has no native
 first-class view support without external libraries.
 """
