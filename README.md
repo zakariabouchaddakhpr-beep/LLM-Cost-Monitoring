@@ -6,19 +6,42 @@ every call with consistent metrics: latency, tokens, cost, throughput,
 retry behavior, and an optional quality score — regardless of which
 provider answered.
 
+Built on [LiteLLM](https://github.com/BerriAI/litellm) for the actual
+provider calls. LiteLLM handles all provider-specific routing via the
+model-string prefix (e.g. `openai/gpt-4o`, `anthropic/claude-3-5-sonnet`),
+so the library needs only a single thin adapter.
+
 **New in this version:**
 - **OpenTelemetry GenAI Semantic Conventions** — every call emits a span
-  with standard attributes (`gen_ai.system`, `gen_ai.usage.*`, etc.) and
-  metrics (`gen_ai.client.token.usage`, `gen_ai.client.operation.duration`,
-  `llm.cost.usd`). Console exporter by default; OTLP when
-  `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
-- **DuckDB persistence** — all traces are saved to a local DuckDB file
-  with pre-built analytics views for cost attribution by tenant and use case.
+  with standard attributes and metrics. Console exporter by default; OTLP
+  when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+- **DuckDB persistence via SQLAlchemy ORM** — all traces are saved through
+  a proper ORM layer (`core/infrastructure/persistence/`) with pre-built
+  analytics views for cost attribution by tenant and use case.
 
-Built on [LiteLLM](https://github.com/BerriAI/litellm) for the actual
-provider calls, and a Factory pattern for provider selection: swap
-providers by changing which class the Factory looks up, no other code
-changes needed elsewhere in the library.
+## Architecture (layered)
+
+```
+core/
+├── domain/              # Pure business logic — zero external deps
+│   ├── result.py        # LLMCallResult dataclass
+│   └── metrics.py       # throughput / cost-efficiency math
+├── application/         # Orchestration layer
+│   ├── monitor.py       # LLMMonitor — the middleman
+│   └── quality_scoring.py
+└── infrastructure/      # Adapters for external systems
+    ├── provider.py      # LiteLLM adapter
+    ├── otel.py          # OpenTelemetry tracer & meter
+    └── persistence/     # SQLAlchemy ORM + DuckDB
+        ├── database.py
+        ├── models.py
+        ├── repository.py
+        └── views.py
+```
+
+**Design principle:** `domain` knows nothing about HTTP, databases, or OTel.
+`application` wires domain + infrastructure together. `infrastructure`
+adapts external APIs to the domain's interfaces.
 
 ## Project structure
 
@@ -28,39 +51,43 @@ llm_monitor/
 ├── config/
 │   └── settings.py            judge model, retry settings, OTel config
 ├── core/
-│   ├── base_provider.py        the interface every provider adapter implements
-│   ├── provider_factory.py     Factory: provider name -> provider instance
-│   ├── monitor.py              LLMMonitor - the middleman, wraps any provider with metrics & OTel
-│   ├── models.py                LLMCallResult - the structured result object
-│   ├── trace_store.py           DuckDB persistence layer with analytics views
-│   ├── otel_setup.py            OpenTelemetry tracer & meter initialization
-│   ├── logging_config.py        shared logging setup (used instead of print())
-│   ├── metrics.py               throughput / cost-efficiency math
-│   ├── quality_scoring.py       optional LLM-as-judge quality scoring
-│   └── providers/
-│       ├── openai_provider.py
-│       ├── anthropic_provider.py
-│       ├── gemini_provider.py
-│       ├── groq_provider.py
-│       └── cerebras_provider.py
+│   ├── domain/
+│   │   ├── result.py          LLMCallResult dataclass
+│   │   └── metrics.py         pure math functions
+│   ├── application/
+│   │   ├── monitor.py         LLMMonitor orchestrator
+│   │   └── quality_scoring.py
+│   ├── infrastructure/
+│   │   ├── provider.py        single LiteLLM adapter
+│   │   ├── otel.py            OpenTelemetry setup
+│   │   └── persistence/
+│   │       ├── database.py    SQLAlchemy engine factory
+│   │       ├── models.py      ORM models (declarative)
+│   │       ├── repository.py  TraceRepository (CRUD + analytics)
+│   │       └── views.py       DuckDB analytics views
+│   ├── logging_config.py
+│   └── __init__.py            backward-compat re-exports
 ├── tests/
-│   ├── test_metrics.py
-│   ├── test_monitor.py
-│   └── test_trace_store.py
+│   ├── domain/
+│   │   └── test_metrics.py
+│   ├── application/
+│   │   └── test_monitor.py
+│   └── infrastructure/
+│       └── test_persistence.py
 ├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
-└── results/                    generated at runtime (JSON logs + DuckDB), not committed
+└── results/                    generated at runtime, not committed
 ```
 
 ## Usage
 
 ```python
-from core.monitor import LLMMonitor
-from core.trace_store import TraceStore
+from core.application.monitor import LLMMonitor
+from core.infrastructure.persistence import TraceRepository
 
 monitor = LLMMonitor(provider_name="anthropic", model="anthropic/claude-3-5-sonnet-20241022")
-store   = TraceStore()
+repo    = TraceRepository()
 
 result = monitor.call(
     "Explain the Factory design pattern in 3 sentences.",
@@ -69,16 +96,11 @@ result = monitor.call(
 )
 
 print(result.total_tokens, result.latency_ms, result.cost_usd)
-store.save(result)
+repo.save(result)
 
 # Query aggregated analytics
-print(store.query_df("SELECT * FROM v_cost_by_tenant"))
+print(repo.query_df("SELECT * FROM v_cost_by_tenant"))
 ```
-
-`result` is an `LLMCallResult` instance (see `core/models.py`) with the
-same fields no matter which provider was called — see "Metrics tracked"
-below. `provider_name` and `model` are required and explicit — there's
-no default model lookup; you always state exactly which model you want.
 
 ### Cost attribution
 
@@ -86,10 +108,78 @@ Pass `tenant_id` and `use_case` to `monitor.call()` to slice costs in
 DuckDB:
 
 ```python
-store.get_summary(tenant_id="acme-corp")
-store.get_summary(use_case="support")
-store.query_df("SELECT * FROM v_cost_by_use_case")
+repo.get_summary(tenant_id="acme-corp")
+repo.get_summary(use_case="support")
+repo.query_df("SELECT * FROM v_cost_by_use_case")
 ```
+
+## Setup (Docker — fully self-contained)
+
+The Docker image bundles Python, DuckDB, SQLAlchemy, OpenTelemetry, and all
+other dependencies. You don't need Python, pip, or anything else installed
+locally.
+
+```bash
+cp .env.example .env        # fill in your real API keys
+docker compose up --build
+```
+
+That's it. The container will:
+1. Install all Python dependencies inside the image
+2. Run `quickstart.py` which calls the LLM and saves traces
+3. Persist results to `./results/` on your host (JSON + DuckDB file)
+4. Print OTel spans and metrics to the console
+5. Expose a Streamlit dashboard at http://localhost:8501 for exploring cost, latency, and quality analytics
+
+### What's inside the image
+
+| Component | Version | Purpose |
+|-----------|---------|---------|
+| Python | 3.12 | Runtime |
+| LiteLLM | >=1.40 | Unified LLM provider API |
+| DuckDB | >=1.0 | Embedded analytics database |
+| SQLAlchemy | >=2.0 | ORM layer |
+| OpenTelemetry | >=1.25 | Traces and metrics |
+| pandas | >=2.0 | DataFrame support |
+
+### Accessing the DuckDB file
+
+After running, the database is at `./results/llm_traces.duckdb` on your host:
+
+```bash
+# Query from host using DuckDB CLI (if installed)
+duckdb ./results/llm_traces.duckdb "SELECT * FROM v_cost_by_tenant"
+
+# Or attach to the running container
+docker exec -it llm-monitor python -c "
+from core.infrastructure.persistence import TraceRepository
+r = TraceRepository('/app/results/llm_traces.duckdb')
+print(r.query_df('SELECT * FROM v_cost_by_tenant'))
+"
+```
+
+### Environment variables in Docker
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `OPENAI_API_KEY` | * | — | OpenAI API key |
+| `ANTHROPIC_API_KEY` | * | — | Anthropic API key |
+| `GEMINI_API_KEY` | * | — | Google Gemini API key |
+| `GROQ_API_KEY` | * | — | Groq API key |
+| `CEREBRAS_API_KEY` | * | — | Cerebras API key |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | — | OTLP collector URL (omit for console) |
+| `OTEL_SERVICE_NAME` | — | `llm-monitor` | Service name in traces |
+| `DUCKDB_PATH` | — | `/app/results/llm_traces.duckdb` | DB file location |
+
+\* At least one provider key matching the `model=` string in `quickstart.py`.
+
+### Re-running after code changes
+
+```bash
+docker compose up --build
+```
+
+The `--build` flag rebuilds the image when you change source code.
 
 ## Setup (local, no Docker)
 
@@ -101,9 +191,9 @@ pip install -r requirements.txt
 python quickstart.py
 ```
 
-Edit `PROVIDER_NAME` and `MODEL` at the top of `quickstart.py` to change
-which LLM gets called. Results are written to both `results/call_log_*.json`
-and `results/llm_traces.duckdb`.
+Edit the `model=` argument in `quickstart.py` to change which LLM gets
+called. Results are written to both `results/call_log_*.json` and
+`results/llm_traces.duckdb`.
 
 ## Setup (Docker)
 
@@ -114,6 +204,12 @@ docker compose up --build
 
 Results still land in `./results/` on your host machine via the volume
 mount in `docker-compose.yml`.
+
+## Streamlit dashboard
+
+A local Streamlit dashboard is available through Docker at http://localhost:8501.
+
+The dashboard reads directly from the persisted DuckDB file at `./results/llm_traces.duckdb` and provides built-in cost, latency, and quality analytics.
 
 ## OpenTelemetry
 
@@ -136,13 +232,14 @@ to an OTLP collector instead, set the environment variable:
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ```
 
-## DuckDB persistence
+## DuckDB persistence (SQLAlchemy ORM)
 
-`TraceStore` creates a local DuckDB file (default: `results/llm_traces.duckdb`)
-with the following schema:
+`TraceRepository` creates a local DuckDB file via SQLAlchemy with the
+following schema:
 
-- **Table `llm_traces`** — one row per call with all `LLMCallResult` fields
-  plus `tenant_id`, `use_case`, `span_id`, and `trace_otel_id`.
+- **Table `llm_traces`** — mapped by the `LLMTrace` ORM model. One row
+  per call with all `LLMCallResult` fields plus `tenant_id`, `use_case`,
+  `span_id`, and `trace_otel_id`.
 - **View `v_cost_by_tenant`** — aggregated cost and token usage per tenant.
 - **View `v_cost_by_use_case`** — aggregated cost and average quality per use case.
 - **View `v_latency_percentiles`** — p50 / p90 / p99 latency per provider+model.
@@ -150,25 +247,35 @@ with the following schema:
 API:
 
 ```python
-store = TraceStore()
-store.save(result)                          # single insert
-store.save_many([r1, r2, r3])               # bulk insert
-store.query("SELECT * FROM llm_traces")     # raw SQL -> list of tuples
-store.query_df("SELECT * FROM v_cost_by_tenant")  # raw SQL -> pandas DataFrame
-store.get_summary(tenant_id="acme")         # dict with totals & averages
-store.export_to_parquet("traces.parquet")   # export to Parquet
+repo = TraceRepository()
+repo.save(result)                          # ORM merge (upsert)
+repo.save_many([r1, r2, r3])               # bulk merge
+repo.query("SELECT * FROM llm_traces")     # raw SQL → list of tuples
+repo.query_df("SELECT * FROM v_cost_by_tenant")  # raw SQL → pandas DataFrame
+repo.get_summary(tenant_id="acme")         # dict with totals & averages
+repo.export_to_parquet("traces.parquet")   # export to Parquet
 ```
 
-## Adding a new provider
+## Switching providers
 
-1. Create `core/providers/my_provider.py`, implementing `call()`,
-   `get_provider_name()`, and `get_model_string()`, with `model: str`
-   as a required constructor argument (see any existing provider for
-   the pattern — there is no default-model fallback).
-2. Register it in `core/provider_factory.py`:
-   `LLMProviderFactory.register_provider("my_provider", MyProvider)`
+LiteLLM routes to the correct provider based on the model-string prefix:
 
-Nothing in `monitor.py` needs to change.
+| Provider | Example model string |
+|----------|---------------------|
+| OpenAI | `openai/gpt-4o` |
+| Anthropic | `anthropic/claude-3-5-sonnet-20241022` |
+| Gemini | `gemini/gemini-3.5-flash` |
+| Groq | `groq/llama-3.3-70b-versatile` |
+| Cerebras | `cerebras/gpt-oss-120b` |
+
+Just change the `model=` argument when creating `LLMMonitor`:
+
+```python
+monitor = LLMMonitor(provider_name="anthropic", model="anthropic/claude-3-5-sonnet-20241022")
+```
+
+`provider_name` is used for logging, OTel spans, and DuckDB analytics.
+`model` is passed straight to LiteLLM, which handles the actual API call.
 
 ## Metrics tracked per call
 

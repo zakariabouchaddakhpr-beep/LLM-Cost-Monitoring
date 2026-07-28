@@ -1,9 +1,31 @@
 services:
-  llm-benchmark:
+  llm-monitor:
     build: .
-    container_name: llm_monitor
+    container_name: llm-monitor
+    env_file:
+      - .env
+    environment:
+      - DUCKDB_PATH=/app/results/llm_traces.duckdb
+    volumes:
+      - ./results:/app/results
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import duckdb; duckdb.connect('/app/results/llm_traces.duckdb')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  streamlit:
+    build: .
+    container_name: llm-monitor-dashboard
+    command: ["streamlit", "run", "streamlit_app.py", "--server.address", "0.0.0.0", "--server.port", "8501", "--server.headless", "true"]
     env_file:
       - .env
     volumes:
-      # Persist results on the host machine even after the container exits
       - ./results:/app/results
+    ports:
+      - "8501:8501"
+    depends_on:
+      - llm-monitor
+    restart: unless-stopped

@@ -1,24 +1,15 @@
 """
 Example usage of the LLM monitoring library.
 
-This demonstrates:
+Demonstrates:
 1. Calling an LLM through LLMMonitor with OTel tracing
-2. Saving results to DuckDB for persistence and analytics
+2. Saving results to DuckDB (via SQLAlchemy ORM) for persistence
 3. Querying aggregated cost and latency views
-
-To switch provider/model, edit the PROVIDER_NAME and MODEL constants below.
-
-Run with: python quickstart.py
 """
 
-import os
-
-from core.monitor import LLMMonitor
-from core.trace_store import TraceStore
+from core.application.monitor import LLMMonitor
+from core.infrastructure.persistence import TraceRepository
 from core.logging_config import configure_logging, get_logger
-
-configure_logging()
-logger = get_logger(__name__)
 
 
 def log_result(result) -> None:
@@ -39,8 +30,12 @@ def log_result(result) -> None:
 
 
 def main():
-    monitor = LLMMonitor(provider_name="gemini", model="gemini/gemini-3.5-flash")
-    store = TraceStore()
+    configure_logging()
+    global logger
+    logger = get_logger(__name__)
+
+    monitor = LLMMonitor(provider_name="cerebras", model="cerebras/gpt-oss-120b")
+    repo = TraceRepository()
 
     prompts = [
         ("Explain the Factory design pattern in 3 sentences.", "docs", "tutorial"),
@@ -55,34 +50,33 @@ def main():
         results.append(result)
         log_result(result)
 
-    # Persist all traces to DuckDB
-    store.save_many(results)
+    repo.save_many(results)
     logger.info("Saved %d traces to DuckDB", len(results))
 
-    # Show aggregated views
     logger.info("--- Cost by Tenant ---")
-    for row in store.query("SELECT * FROM v_cost_by_tenant"):
+    for row in repo.query("SELECT * FROM v_cost_by_tenant"):
         logger.info("tenant=%s calls=%s total_cost=%.6f", row[0], row[1], row[2])
 
     logger.info("--- Cost by Use Case ---")
-    for row in store.query("SELECT * FROM v_cost_by_use_case"):
+    for row in repo.query("SELECT * FROM v_cost_by_use_case"):
         logger.info("use_case=%s calls=%s total_cost=%.6f avg_quality=%.1f", row[0], row[1], row[2], row[4])
 
     logger.info("--- Latency Percentiles ---")
-    for row in store.query("SELECT * FROM v_latency_percentiles"):
+    for row in repo.query("SELECT * FROM v_latency_percentiles"):
         logger.info("provider=%s model=%s p50=%.1fms p90=%.1fms p99=%.1fms", row[0], row[1], row[3], row[4], row[5])
 
-    # Summary
-    summary = store.get_summary()
+    summary = repo.get_summary()
     logger.info("Overall summary: calls=%d cost=$%.6f avg_latency=%.1fms",
                 summary["total_calls"], summary["total_cost_usd"], summary["avg_latency_ms"])
 
-    # Also save to JSON for compatibility
+    import os
     os.makedirs("results", exist_ok=True)
     for i, result in enumerate(results):
         result.save(os.path.join("results", f"call_log_{i}.json"))
 
-    store.close()
+    repo.close()
+
+    logger.info("Done.")
 
 
 if __name__ == "__main__":

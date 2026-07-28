@@ -54,8 +54,7 @@ exact format:
         )
         raw = judge_response.choices[0].message.content.strip()
 
-        # Defensive cleanup in case the judge wraps output in code fences
-        # despite instructions not to.
+        
         if raw.startswith("```"):
             raw = raw.strip("`")
             if raw.lower().startswith("json"):
@@ -65,7 +64,7 @@ exact format:
         score = int(parsed.get("score"))
         reasoning = parsed.get("reasoning")
 
-        # Clamp defensively in case the judge ignores the range.
+    
         score = max(1, min(10, score))
 
         return {"quality_score": score, "quality_reasoning": reasoning}
