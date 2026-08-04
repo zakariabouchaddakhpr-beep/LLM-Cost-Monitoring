@@ -1,7 +1,7 @@
 """Unit tests for core/domain/metrics.py — pure math, no mocks needed."""
 
 import pytest
-from core.domain.metrics import compute_throughput, compute_cost_efficiency
+from llm_observability.core.domain.metrics import compute_throughput, compute_cost_efficiency
 
 
 class TestComputeThroughput:

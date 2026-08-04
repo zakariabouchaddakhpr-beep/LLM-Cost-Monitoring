@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-cost-observability"
+version = "0.2.0"
+description = "Cost and latency observability for LLM and embedding APIs"
+readme = "README.md"
+# 3.10 is the floor because the code uses the `str | None` union syntax.
+requires-python = ">=3.10"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+# Read from requirements.txt so the Docker build and a pip install of the
+# package can never disagree about versions.
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+# One top-level package, so importing this cannot collide with a consuming
+# project's own config.py or core/. main.py and tests/ are not shipped.
+include = ["llm_observability*"]
+
+[tool.setuptools.package-data]
+# The dashboard's theme. Streamlit reads .streamlit/config.toml from the working
+# directory, and api.dashboard() runs it with cwd set to the package root, so
+# this has to travel with the package.
+llm_observability = [".streamlit/config.toml"]

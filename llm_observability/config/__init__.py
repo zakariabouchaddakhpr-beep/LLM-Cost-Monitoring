@@ -1,0 +1,33 @@
+"""Config package — exports settings for the library."""
+
+from llm_observability.config.settings import (
+    DATABASE_ENV_VAR,
+    JUDGE_MODEL,
+    MAX_RETRIES,
+    OTEL_EXPORTER_OTLP_ENDPOINT,
+    OTEL_SERVICE_NAME,
+    PROJECT_NAME,
+    PROJECT_ROOT,
+    RETRY_BACKOFF_SECONDS,
+    ClickHouseConfig,
+    ConfigError,
+    get_clickhouse_config,
+    resolve_database,
+    slug,
+)
+
+__all__ = [
+    "DATABASE_ENV_VAR",
+    "JUDGE_MODEL",
+    "MAX_RETRIES",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_SERVICE_NAME",
+    "PROJECT_NAME",
+    "PROJECT_ROOT",
+    "RETRY_BACKOFF_SECONDS",
+    "ClickHouseConfig",
+    "ConfigError",
+    "get_clickhouse_config",
+    "resolve_database",
+    "slug",
+]

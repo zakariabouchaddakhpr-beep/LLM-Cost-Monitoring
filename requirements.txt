@@ -1,3 +1,7 @@
+# Runtime dependencies. Installed with: pip install -r requirements.txt
+# litellm is pinned exactly because this code reads its response shape and
+# pricing table in detail; the rest are stable enough for a floor.
+
 # Core LLM calling
 litellm==1.91.4
 
@@ -7,16 +11,20 @@ opentelemetry-sdk>=1.25.0
 opentelemetry-exporter-otlp>=1.25.0
 opentelemetry-semantic-conventions>=0.46b0
 
-# Persistence — SQLAlchemy ORM + DuckDB
-sqlalchemy>=2.0.0
-duckdb-engine>=0.13.0
-duckdb>=1.0.0
+# Persistence — ClickHouse over its HTTP interface
+# clickhouse-connect is the official driver. query_df/insert are almost exactly
+# what the repository and dashboard need, so there is no ORM: ClickHouse needs
+# ENGINE and ORDER BY clauses no ORM expresses, and an append-only table gives
+# change tracking nothing to do.
+clickhouse-connect>=1.6.0
 pandas>=2.0.0
+# export_to_parquet writes client-side via pandas, which needs an engine.
+pyarrow>=14.0.0
 
 # Config
 python-dotenv>=1.0.0
 
 # Web dashboard
 streamlit>=1.30.0
-
-
+# Ships with streamlit, but streamlit_app.py imports it directly for the charts.
+altair>=5.0.0

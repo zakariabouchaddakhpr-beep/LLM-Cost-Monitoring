@@ -3,13 +3,18 @@ Example usage of the LLM monitoring library.
 
 Demonstrates:
 1. Calling an LLM through LLMMonitor with OTel tracing
-2. Saving results to DuckDB (via SQLAlchemy ORM) for persistence
+2. Saving results to ClickHouse for persistence
 3. Querying aggregated cost and latency views
+
+This is an example, not part of the library. It is also what the `monitor`
+service runs in Docker, which is why `docker compose up` makes real API calls.
 """
 
-from core.application.monitor import LLMMonitor
-from core.infrastructure.persistence import TraceRepository
-from core.logging_config import configure_logging, get_logger
+from pathlib import Path
+
+from llm_observability.core.application.monitor import LLMMonitor
+from llm_observability.core.infrastructure.persistence import TraceRepository
+from llm_observability.core.logging_config import configure_logging, get_logger
 
 
 def log_result(result) -> None:
@@ -51,7 +56,7 @@ def main():
         log_result(result)
 
     repo.save_many(results)
-    logger.info("Saved %d traces to DuckDB", len(results))
+    logger.info("Saved %d traces to ClickHouse", len(results))
 
     logger.info("--- Cost by Tenant ---")
     for row in repo.query("SELECT * FROM v_cost_by_tenant"):
@@ -69,10 +74,12 @@ def main():
     logger.info("Overall summary: calls=%d cost=$%.6f avg_latency=%.1fms",
                 summary["total_calls"], summary["total_cost_usd"], summary["avg_latency_ms"])
 
-    import os
-    os.makedirs("results", exist_ok=True)
+    # The database now lives on a server, so there is no file to sit beside.
+    # Name the directory explicitly instead of deriving it from a path.
+    log_dir = Path("results")
+    log_dir.mkdir(parents=True, exist_ok=True)
     for i, result in enumerate(results):
-        result.save(os.path.join("results", f"call_log_{i}.json"))
+        result.save(str(log_dir / f"call_log_{i}.json"))
 
     repo.close()
 

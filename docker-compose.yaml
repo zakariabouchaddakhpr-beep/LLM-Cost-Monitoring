@@ -1,31 +1,103 @@
+# Containerised LLM observability stack: three services.
+#
+#   cp .env.example .env     # fill in API keys, PROJECT_NAME and CLICKHOUSE_*
+#   docker compose up --build
+#
+# WARNING: `docker compose up` runs the monitor, which makes real, paid API
+# calls. To bring up only the database and the dashboard:
+#   docker compose up -d clickhouse dashboard
+#
+# Configuration comes entirely from .env. The database is a service now rather
+# than a file on a shared volume, so both application containers depend on it
+# instead of on each other — and the dashboard no longer has to wait for the
+# monitored application to exit before it can read.
+
+# Shared settings. The `x-` prefix makes this an extension field rather than a
+# service, so `docker compose up` does not try to run it.
+x-app: &app
+  build: .
+  env_file:
+    - .env
+  environment:
+    # These two override whatever .env says, and must. The same .env is read by
+    # Compose and by a local `python main.py`, but the address differs: on the
+    # host the server is localhost on the published port, while inside the
+    # network it is the service name on the container port. Keep .env set to
+    # localhost for local runs; these lines correct it for the containers.
+    CLICKHOUSE_HOST: clickhouse
+    CLICKHOUSE_PORT: "8123"
+  volumes:
+    # Only the example JSON call logs now; the traces live in the server.
+    - ./results:/app/results
+  depends_on:
+    clickhouse:
+      condition: service_healthy
+
 services:
-  llm-monitor:
-    build: .
-    container_name: llm-monitor
-    env_file:
-      - .env
+  # The trace store. A real dependency with a real healthcheck.
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: llm-clickhouse-${PROJECT_NAME:-demo}
     environment:
-      - DUCKDB_PATH=/app/results/llm_traces.duckdb
+      # Both are REQUIRED. With neither set, the image's entrypoint logs
+      # "neither CLICKHOUSE_USER nor CLICKHOUSE_PASSWORD is set, disabling
+      # network access for user 'default'" and every connection then fails with
+      # Code: 194 Authentication failed. Measured, not assumed.
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:?set CLICKHOUSE_USER in .env}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD in .env}
+    ports:
+      # 8123 is the HTTP interface, which is what clickhouse-connect speaks.
+      - "${CLICKHOUSE_PORT:-8123}:8123"
     volumes:
-      - ./results:/app/results
+      # Named volume: the data outlives any container, and `docker compose down`
+      # does not take the traces with it.
+      - clickhouse-data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import duckdb; duckdb.connect('/app/results/llm_traces.duckdb')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      # wget is present in this image; curl is not.
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+             "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
       start_period: 10s
 
-  streamlit:
-    build: .
-    container_name: llm-monitor-dashboard
-    command: ["streamlit", "run", "streamlit_app.py", "--server.address", "0.0.0.0", "--server.port", "8501", "--server.headless", "true"]
-    env_file:
-      - .env
-    volumes:
-      - ./results:/app/results
+  # Example workload: runs main.py once, writes traces, exits.
+  # Replace the command with your own application's entry point.
+  monitor:
+    <<: *app
+    container_name: llm-monitor-${PROJECT_NAME:-demo}
+    command: ["python", "main.py"]
+    # A batch job that exits 0. With `unless-stopped` Docker would read the
+    # clean exit as a stop and restart it forever, re-running the paid API calls.
+    restart: "no"
+
+  dashboard:
+    <<: *app
+    container_name: llm-monitor-dashboard-${PROJECT_NAME:-demo}
+    # Same entry point as obs.dashboard(), so the container and a local run
+    # behave identically — including the working directory that loads the theme.
+    command: ["python", "-m", "llm_observability.dashboard",
+              "--port", "8501", "--address", "0.0.0.0"]
     ports:
-      - "8501:8501"
-    depends_on:
-      - llm-monitor
+      - "${DASHBOARD_PORT:-8501}:8501"
     restart: unless-stopped
+    healthcheck:
+      # Written in Python because curl is not in the slim image.
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # Longer than the database's: Streamlit takes a few seconds to boot.
+      start_period: 15s
+
+volumes:
+  clickhouse-data:

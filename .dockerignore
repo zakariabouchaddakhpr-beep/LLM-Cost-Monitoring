@@ -1,5 +1,24 @@
+# What `COPY . .` must not copy into the image. Same comment rule as .gitignore:
+# `#` only starts a comment at the beginning of a line.
+
+# Excluded deliberately: .env is injected at run time via env_file, so no secrets
+# are baked into a layer. Its absence is also what makes a relative DUCKDB_PATH
+# resolve against the working directory (/app), where ./results is mounted.
 .env
+
+# Runtime data — arrives as a bind mount at /app/results.
 results/
+
+# Host-platform bytecode
 __pycache__/
 *.pyc
+
+# Not needed by the build
 .git/
+build/
+dist/
+*.egg-info/
+
+# A ~500MB Windows virtualenv, unusable on Linux
+.venv/
+venv/

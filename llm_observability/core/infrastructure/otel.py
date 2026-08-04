@@ -18,7 +18,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 
-from config.settings import OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SERVICE_NAME
+from llm_observability.config.settings import OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SERVICE_NAME
 
 _RESOURCE = Resource.create({"service.name": OTEL_SERVICE_NAME})
 

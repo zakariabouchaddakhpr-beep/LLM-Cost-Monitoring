@@ -1,0 +1,28 @@
+# Dashboard theme. Both modes are defined, so Streamlit follows the viewer's
+# preference and the switch in Settings -> Appearance works.
+#
+# The dark values are NOT a flip of the light ones: they are separate steps of
+# the same hues, chosen for the dark surface and validated against it
+# (contrast, colour-vision separation, lightness band). streamlit_app.py reads
+# the active mode via st.context.theme and matches its chart colours to it.
+
+[theme]
+font = "sans serif"
+baseRadius = "0.6rem"
+showWidgetBorder = true
+
+[theme.light]
+backgroundColor = "#fcfcfb"
+secondaryBackgroundColor = "#f4f3f0"
+textColor = "#0b0b0b"
+primaryColor = "#2a78d6"
+borderColor = "#e1e0d9"
+dataframeHeaderBackgroundColor = "#f4f3f0"
+
+[theme.dark]
+backgroundColor = "#1a1a19"
+secondaryBackgroundColor = "#232322"
+textColor = "#ffffff"
+primaryColor = "#3987e5"
+borderColor = "#2c2c2a"
+dataframeHeaderBackgroundColor = "#232322"

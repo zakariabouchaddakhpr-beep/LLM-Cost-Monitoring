@@ -15,7 +15,7 @@ _CONFIGURED = False
 
 def configure_logging(level=logging.INFO) -> None:
     """Call this once, at the entry point of the application
-    (e.g. quickstart.py), before anything else logs."""
+    (e.g. main.py), before anything else logs."""
     global _CONFIGURED
     if _CONFIGURED:
         return
