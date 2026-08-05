@@ -4,26 +4,34 @@ A middleware library that sits between your application and whichever
 LLM provider you use (Claude, GPT, Gemini, Groq, Cerebras), instrumenting
 every call with consistent metrics: latency, tokens, cost, throughput,
 retry behavior, and an optional quality score — regardless of which
-provider answered.
+provider answered. Embedding calls are instrumented the same way and land in
+the same table, so a cost query spans everything the application spent.
 
 Built on [LiteLLM](https://github.com/BerriAI/litellm) for the actual
 provider calls. LiteLLM handles all provider-specific routing via the
 model-string prefix (e.g. `openai/gpt-4o`, `anthropic/claude-3-5-sonnet`),
 so the library needs only a single thin adapter.
 
-**New in this version:**
+Four pieces:
+
+- **A three-call API** — `obs.init()`, `obs.call()`, `obs.dashboard()`. Adding
+  observability to an existing project is three lines and no connection string.
 - **OpenTelemetry GenAI Semantic Conventions** — every call emits a span
   with standard attributes and metrics. Console exporter by default; OTLP
   when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 - **ClickHouse persistence** — traces are appended to a ClickHouse server, one
-  database per project, with pre-built analytics views for cost attribution by
-  tenant and use case.
+  database per project, with five pre-built analytics views for cost attribution
+  by tenant and use case.
+- **A Streamlit dashboard** — cost, latency, quality, tokens and activity over
+  whatever the filters select, reading live while the monitored application is
+  still writing.
 
 ## Architecture (layered)
 
 ```
 llm_observability/
-├── api.py                   the public API: init / call / dashboard
+├── api.py                   the public API: init / call / embed / dashboard
+├── .streamlit/config.toml   dashboard theme, shipped as package data
 ├── config/
 │   └── settings.py          connection config, retries, OTel config
 ├── core/
@@ -33,13 +41,14 @@ llm_observability/
 │   ├── application/         orchestration
 │   │   ├── monitor.py       LLMMonitor — the middleman
 │   │   └── quality_scoring.py
-│   └── infrastructure/      adapters for external systems
-│       ├── provider.py      LiteLLM adapter
-│       ├── otel.py          OpenTelemetry tracer & meter
-│       └── persistence/     ClickHouse via clickhouse-connect
-│           ├── database.py  client factory
-│           ├── schema.py    all DDL: database, table, four views
-│           └── repository.py TraceRepository (writes + analytics)
+│   ├── infrastructure/      adapters for external systems
+│   │   ├── provider.py      LiteLLM adapter
+│   │   ├── otel.py          OpenTelemetry tracer & meter
+│   │   └── persistence/     ClickHouse via clickhouse-connect
+│   │       ├── database.py  client factory
+│   │       ├── schema.py    all DDL: database, table, five views
+│   │       └── repository.py TraceRepository (writes + analytics)
+│   └── logging_config.py    configure_logging / get_logger
 └── dashboard/
     ├── app.py               the Streamlit dashboard
     └── __main__.py          python -m llm_observability.dashboard
@@ -64,7 +73,7 @@ names.
 ```
 ├── llm_observability/       the library (this is what you import)
 ├── main.py                  example app — OTel + ClickHouse showcase
-├── tests/                   87 tests, mirroring the package layout
+├── tests/                   126 tests, mirroring the package layout
 ├── pyproject.toml           packaging
 ├── requirements.txt
 ├── Dockerfile
@@ -72,7 +81,20 @@ names.
 └── results/                 generated at runtime, not committed
 ```
 
+`main.py` and `tests/` are deliberately outside the package and are not shipped
+by a `pip install`: only `llm_observability/` is.
+
+**Requirements:** Python 3.10 or newer — the code uses the `str | None` union
+syntax — plus a reachable ClickHouse server. Everything else is in
+`requirements.txt`, which `pyproject.toml` reads directly so a Docker build and a
+`pip install` of the package can never disagree about versions.
+
 ## Usage
+
+Two ways in. This is the lower-level one, where you hold the monitor and the
+repository yourself; skip to
+[Using it in your own project](#using-it-in-your-own-project) for the
+three-call API that wires them together for you.
 
 ```python
 from llm_observability.core.application.monitor import LLMMonitor
@@ -151,6 +173,21 @@ Reading happens at call time, not import time, so a host application may also se
 these in code before its first LLM call. Importing the library never requires
 configuration, and never requires a reachable server.
 
+### Not environment variables
+
+Three settings are constants in [settings.py](llm_observability/config/settings.py)
+rather than environment variables, because they describe the library's behaviour
+rather than the deployment:
+
+| Constant | Value | |
+|---|---|---|
+| `MAX_RETRIES` | `2` | retries *after* the first attempt, so 3 calls at most. The count that was actually used lands in `attempts_used` |
+| `RETRY_BACKOFF_SECONDS` | `1.5` | base delay, doubled on each subsequent retry |
+| `JUDGE_MODEL` | `groq/llama-3.3-70b-versatile` | the model that scores quality and classifies queries, when either is enabled |
+
+`tenant_id` and `use_case` are per-call arguments, not configuration — the same
+process serves many tenants, so they cannot be fixed at startup.
+
 ## Using it in your own project
 
 Three calls. Each project gets its own database; nothing is shared.
@@ -194,11 +231,17 @@ like.
 ```python
 obs.summary()          # {'total_calls': 15, 'total_cost_usd': 0.0045, ...}
 obs.database()         # which ClickHouse database this project's traces are in
+obs.embed("some text") # embeddings, instrumented the same way (see below)
 obs.dashboard(port=8502, block=False)   # a second project, non-blocking
 
 client = obs.init(...)  # or hold the object instead of using the module default
 client.call("…")
+client.close()          # release the ClickHouse connection
 ```
+
+`init()` returns an `Observer` and also stores it as the module default, which is
+what lets the bare `obs.call(...)` form work. Calling any of these before
+`init()` raises with an explanation rather than a `NoneType` error.
 
 ### Embeddings
 
@@ -326,6 +369,15 @@ And the dashboard can be launched without `init()`:
 python -m llm_observability.dashboard --name ticket-triage
 CLICKHOUSE_DATABASE=other_project python -m llm_observability.dashboard --port 8502
 ```
+
+| Flag | |
+|---|---|
+| `--name` | derives the database, used only when `CLICKHOUSE_DATABASE` is unset |
+| `--port` | default `8501` |
+| `--address` | bind address. Containers need `0.0.0.0`, or the published port looks dead from the host |
+
+A missing database or an unreachable server exits `2` with a one-line message
+rather than a driver traceback.
 
 ### One thing that will surprise you
 
@@ -492,6 +544,39 @@ failures are normal, and instrumentation must never be the reason the calling
 application goes down — the same principle that makes a failed LLM call return a
 result with `.error` set instead of propagating.
 
+## The dashboard
+
+`obs.dashboard()`, or `python -m llm_observability.dashboard`, opens a Streamlit
+UI over one database. A row of filters — date range, provider, tenant, use case,
+and query type — scopes everything below it, above a KPI row (calls, cost,
+latency, quality, tokens, throughput, failures, retries, truncations) and seven
+tabs:
+
+| Tab | What it answers |
+|---|---|
+| **Cost** | Spend per day, per tenant, per use case, per model, and the ten most expensive calls |
+| **Latency** | p50/p90/p99 per model, the distribution behind them, throughput, and the ten slowest calls |
+| **Quality** | Judge-score distribution, cost against quality, score per use case, models by query type, finish reasons |
+| **Tokens** | Input vs output split per use case and per model |
+| **Activity** | Calls per day and per hour of the day |
+| **Calls** | The raw traces, newest first, capped at 200 rows |
+| **SQL** | An explorer for arbitrary queries against the table and views |
+
+**The filters run on the server, not on a loaded DataFrame.** They are compiled
+into one query, so narrowing a selection sends less over the wire rather than
+more — the opposite of fetching everything and filtering in pandas, which gets
+slower exactly as the trace history grows.
+
+The **Query type** row of pills only appears once something has been classified.
+With `classify_query=False` — the default — an always-visible empty filter would
+be noise.
+
+The theme lives in `llm_observability/.streamlit/config.toml` and ships as
+package data, which is why both `obs.dashboard()` and the Docker service run
+Streamlit with the working directory set to the package: Streamlit reads that
+file from the cwd, so launching from the caller's folder would silently drop the
+light/dark palette.
+
 ## Switching providers
 
 LiteLLM routes to the correct provider based on the model-string prefix:
@@ -515,6 +600,11 @@ monitor = LLMMonitor(provider_name="anthropic", model="anthropic/claude-3-5-sonn
 
 ## Metrics tracked per call
 
+Every call returns an `LLMCallResult` carrying all of the following, and that
+same object is what `TraceRepository.save()` writes as one row.
+
+- `trace_id` / `timestamp` — identity of the call
+- `provider` / `model`
 - `prompt` / `response` — stored **whole**, never truncated
 - `call_type` — `chat` or `embedding`
 - `input_tokens` / `output_tokens` / `total_tokens`
@@ -529,12 +619,26 @@ monitor = LLMMonitor(provider_name="anthropic", model="anthropic/claude-3-5-sonn
   models too
 - `attempts_used` / `error_type` — retry and failure diagnostics
 - `request_id` — provider-assigned ID, if exposed, for cross-referencing later
-- `quality_score` — optional 1–10 rating from a judge LLM
+- `quality_score` / `quality_reasoning` — optional 1–10 rating from a judge LLM,
+  and the sentence it gave for that rating
 - `query_type` — optional classification from that same judge call
 - `cost_efficiency` — quality per dollar spent
 - `span_id` / `trace_otel_id` — correlation with OpenTelemetry traces
 - `tenant_id` / `use_case` — cost attribution fields
 - `vector_dimensions` / `input_count` — embedding calls only
+
+Plus a few conveniences on the object itself:
+
+```python
+result.succeeded            # False when .error is set
+result.to_dict()            # plain dict
+result.to_json(indent=2)
+result.save("call_log.json")
+```
+
+`result.embeddings` holds the vectors on an embedding call and is the one field
+that is **not** persisted — the caller needs them in hand, and a database is the
+wrong place for them.
 
 ## Logging
 
@@ -550,6 +654,26 @@ in one place without touching library code.
 python -m pytest tests/ -v
 ```
 
+126 tests, in a tree mirroring the package: `tests/domain`, `tests/application`,
+`tests/infrastructure`, `tests/config`, plus `tests/test_api.py` for the public
+surface.
+
+**No test makes a paid API call** — the provider is mocked throughout. The
+persistence and API tests do want a real server, since round-tripping through
+ClickHouse is the only way to catch a schema or type mismatch, but they
+`pytest.skip` with an explanatory message when there isn't one rather than
+failing. To run the full suite:
+
+```bash
+docker compose up -d clickhouse
+python -m pytest tests/ -q
+```
+
+They connect to `CLICKHOUSE_HOST`/`CLICKHOUSE_PORT`, or to
+`TEST_CLICKHOUSE_HOST`/`TEST_CLICKHOUSE_PORT` if you would rather point them at a
+throwaway server than at the one holding your real traces. Each test creates and
+drops its own database.
+
 ## Notes
 
 - Never commit `.env` — it's git-ignored. Use `.env.example` as the
@@ -558,3 +682,8 @@ template for which variables need to be set.
 - Model strings passed to `LLMMonitor`/provider constructors should be
 checked against LiteLLM's current supported model list — some provider
 model IDs are version-dated and get deprecated over time.
+- **litellm is pinned exactly** in `requirements.txt`, unlike everything else,
+which only has a floor. This code reads its response shape and its pricing
+table in detail, so a minor release that reshapes either would silently change
+what `cost_usd` means. That pin is also what fixes which model strings are
+priced: bumping it is how you pick up newly released models.
