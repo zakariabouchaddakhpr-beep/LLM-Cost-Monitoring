@@ -1,5 +1,5 @@
 """
-Pure metric calculations. No API calls, just math
+Pure metric calculations.
 """
 
 

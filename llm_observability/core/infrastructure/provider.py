@@ -31,10 +31,6 @@ class LiteLLMProvider:
     def embed(self, inputs: list[str]):
         """
         Send inputs to LiteLLM's embedding endpoint and return the raw response.
-
-        A list always, even for a single string, because that is the shape every
-        provider's embedding API takes — and it keeps the batch case, which is
-        the common one for indexing, from being a special path.
         """
         extra = {"api_key": self._api_key} if self._api_key else {}
         return litellm.embedding(model=self._model, input=inputs, **extra)
