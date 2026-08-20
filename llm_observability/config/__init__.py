@@ -1,4 +1,14 @@
-"""Config package — exports settings for the library."""
+"""
+The config folder.
+
+Everything real lives in settings.py. This file just lists those names again,
+so both of these work and mean exactly the same thing:
+
+    from llm_observability.config import JUDGE_MODEL
+    from llm_observability.config.settings import JUDGE_MODEL
+
+If you're looking for the actual settings, open settings.py.
+"""
 
 from llm_observability.config.settings import (
     DATABASE_ENV_VAR,
