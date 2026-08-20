@@ -340,8 +340,7 @@ zakaria    support-bot      2 calls   $0.0070
 ```
 
 Two applications may write **at the same time** — that is what a database server
-buys you, and it is the reason this project moved off DuckDB, whose single-writer
-lock made the arrangement impossible.
+buys you.
 
 > **`name=` is ignored when `CLICKHOUSE_DATABASE` is set.** It is only used to
 > *derive* a database name when the variable is absent. That is the documented
@@ -387,8 +386,8 @@ installed. If your virtualenv sits inside a project that has a `.env` with
 setting it — and since it wins, it would override `name`. Pass `database=`
 explicitly if you ever need to be certain.
 
-This matters more than it did under DuckDB: a leaked value now points a project
-at another project's *database* on a shared server, not merely at another file.
+This matters: a leaked value points a project at another project's *database* on
+a shared server.
 
 ## Setup (local, no Docker)
 
@@ -439,22 +438,13 @@ redundant.
 
 ### Readers and writers run at the same time
 
-This is the reason the storage layer is ClickHouse rather than DuckDB.
+This is the reason the storage layer is a database server.
 
-DuckDB is embedded and permits **many readers or one writer, never both**, so
-the dashboard could not display data while the monitored application was still
-writing. The readers had to wait for the writer to *exit*:
-
-```yaml
-depends_on:
-  monitor:
-    condition: service_completed_successfully   # no longer needed
-```
-
-An observability tool that only works after the observed process has finished is
-a report generator. With a server there is no lock to negotiate: start the
-dashboard, run your application, and watch rows arrive. `read_only=`, the
-lock-retry loop and the startup ordering are all gone.
+There is no lock to negotiate: start the dashboard, run your application, and
+watch rows arrive. The dashboard reads while the monitored application is still
+writing, so it never has to wait for that application to exit — an observability
+tool that only works after the observed process has finished is a report
+generator.
 
 `docker compose up` still runs the `monitor` service, which makes **real, paid
 API calls**. To bring up only the database and the dashboard:
@@ -511,20 +501,13 @@ text blanks itself while the row survives, so the cost and latency history stays
 permanent and only the sensitive content ages out. A table-level TTL would have
 dropped the whole row and taken the spend record with it.
 
-Adding a column to a live database is handled by `schema.migrations()`, applied
-on every connection. `CREATE TABLE IF NOT EXISTS` does nothing to a table that
-already exists, so without it an established database would keep its old columns
-and fail every insert. Every statement uses `IF NOT EXISTS` / `IF EXISTS` and is
-safe to re-run.
-
 A column is `Nullable` exactly when `LLMCallResult` declares the field
 `Optional`. That is not stylistic: the driver rejects `None` into a non-nullable
 column, and real traces carry `NULL` error fields on every successful row.
 
-Percentiles use `quantile`, not `quantileExact`. Both it and DuckDB's
-`quantile_cont` interpolate linearly, so the figures match to 0.0003 ms;
-`quantileExact` returns a real member of the dataset and read 527 ms higher at
-p99 over 15 traces. Interpolated and discrete quantiles diverge *most* on small
+Percentiles use `quantile`, not `quantileExact`. `quantile` interpolates
+linearly; `quantileExact` returns a real member of the dataset and read 527 ms
+higher at p99 over 15 traces. Interpolated and discrete quantiles diverge *most* on small
 samples, not least.
 
 API:

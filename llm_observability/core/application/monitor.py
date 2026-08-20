@@ -1,8 +1,3 @@
-"""
-LLMMonitor: the middleman between your app and the AI model.
-    your app  ->  LLMMonitor  ->  LiteLLMProvider  ->  the real API
-"""
-
 import os
 import time
 import uuid
@@ -174,9 +169,6 @@ class LLMMonitor:
              tenant_id: str = None, use_case: str = None,
              judge_api_key: str = None,
              classify_query: bool = False) -> LLMCallResult:
-        """
-        Make one measured call to the AI.
-        """
         tracer = get_tracer()
         with tracer.start_as_current_span(f"chat {self.provider_name}") as span:
             self._set_request_attributes(span, "chat")
@@ -219,7 +211,6 @@ class LLMMonitor:
             return result
 
     def _record_usage(self, result: LLMCallResult, response, span) -> None:
-        """Copy the token counts, the answer, and how it ended onto our result."""
         usage = response.usage
         result.input_tokens = usage.prompt_tokens
         result.output_tokens = usage.completion_tokens
@@ -250,9 +241,6 @@ class LLMMonitor:
 
     def embed(self, inputs, *, tenant_id: str = None,
               use_case: str = None) -> LLMCallResult:
-        """
-        Make one measured embedding call.
-        """
         texts = [inputs] if isinstance(inputs, str) else list(inputs)
 
         tracer = get_tracer()
@@ -287,12 +275,10 @@ class LLMMonitor:
             result.vector_dimensions = len(vectors[0]) if vectors else None
             result.request_id = getattr(response, "id", None)
 
-            # Some embedding providers tell you the token counts, some don't.
             usage = getattr(response, "usage", None)
             if usage is not None:
                 result.input_tokens = getattr(usage, "prompt_tokens", None)
                 result.total_tokens = getattr(usage, "total_tokens", None)
-                # `or 0` because this label needs a number, and None isn't one.
                 span.set_attribute("gen_ai.usage.input_tokens",
                                    result.input_tokens or 0)
 

@@ -1,10 +1,5 @@
-# In .gitignore a `#` only starts a comment at the beginning of a line, so every
-# comment here is on its own line.
-
-# Secrets — never commit these. .env.example is the committed template.
 .env
 
-# Python cache and build artifacts
 __pycache__/
 *.pyc
 *.pyo
@@ -12,14 +7,11 @@ __pycache__/
 build/
 dist/
 
-# Virtual environments
 venv/
 .venv/
 
-# Generated observability data, not source code
 results/
 
-# OS/editor clutter
 .DS_Store
 .vscode/
 .idea/

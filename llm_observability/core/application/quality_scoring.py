@@ -1,7 +1,3 @@
-"""
-Using a second AI model as a "judge" to mark the first one's answer.
-"""
-
 import json
 import logging
 
