@@ -1,11 +1,7 @@
-import os
 import time
 import uuid
 from datetime import datetime, timezone
 from typing import NamedTuple
-
-if "LITELLM_MODE" not in os.environ:
-    os.environ["LITELLM_MODE"] = "PRODUCTION"
 
 import litellm
 

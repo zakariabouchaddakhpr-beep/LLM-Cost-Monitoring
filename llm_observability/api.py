@@ -1,4 +1,3 @@
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -82,21 +81,15 @@ class Observer:
 def launch_dashboard(database: str | None = None, name: str | None = None, *,
                      port: int = 8501, address: str | None = None,
                      block: bool = True):
-    from llm_observability.config.settings import get_clickhouse_config
+    from llm_observability.config.settings import (
+        dashboard_env,
+        get_clickhouse_config,
+    )
 
     database = database or resolve_database(name)
     cfg = get_clickhouse_config(database)
 
-    env = {
-        **os.environ,
-        "CLICKHOUSE_DATABASE": cfg.database,
-        "CLICKHOUSE_HOST": cfg.host,
-        "CLICKHOUSE_PORT": str(cfg.port),
-        "CLICKHOUSE_USER": cfg.username,
-        "CLICKHOUSE_PASSWORD": cfg.password,
-    }
-    if name:
-        env["PROJECT_NAME"] = name
+    env = dashboard_env(cfg, name)
 
     cmd = [sys.executable, "-m", "streamlit", "run", str(_DASHBOARD_APP),
            "--server.port", str(port), "--server.headless", "true"]
