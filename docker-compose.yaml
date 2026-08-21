@@ -1,6 +1,6 @@
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:25.3
+    image: clickhouse/clickhouse-server:26.7
     environment:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:?set it in .env}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set it in .env}

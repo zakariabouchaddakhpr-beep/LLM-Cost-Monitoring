@@ -83,8 +83,6 @@ def page_css(colors: dict) -> str:
   .tile .sub.bad {{ color:{colors['bad']}; }}
   .sec {{ font-family:{FONT}; font-size:.95rem; font-weight:600;
           color:{colors['ink']}; margin:.35rem 0 .1rem 0; }}
-  .sec-sub {{ font-family:{FONT}; font-size:.78rem; color:{colors['muted']};
-              margin:0 0 .5rem 0; }}
 </style>
 """
 
@@ -199,12 +197,9 @@ def render_tiles(items: list[str]) -> None:
                 unsafe_allow_html=True)
 
 
-def section_heading(title: str, subtitle: str = "") -> None:
+def section_heading(title: str) -> None:
     st.markdown(f'<p class="sec">{html.escape(title)}</p>',
                 unsafe_allow_html=True)
-    if subtitle:
-        st.markdown(f'<p class="sec-sub">{html.escape(subtitle)}</p>',
-                    unsafe_allow_html=True)
 
 
 def style_chart(chart: alt.Chart, height: int, colors: dict) -> alt.Chart:
@@ -605,8 +600,7 @@ def main() -> None:
     )
 
     with tab_cost:
-        section_heading("Cost by day",
-                        "Total spend per day for the current filter.")
+        section_heading("Cost by day")
         if daily.empty:
             st.info("No timestamped calls in this selection.")
         else:
@@ -616,8 +610,7 @@ def main() -> None:
 
         c1, c2 = st.columns(2, gap="large")
         with c1:
-            section_heading("Cost by tenant",
-                            "Which customer the spend belongs to.")
+            section_heading("Cost by tenant")
             tenant_costs = (cost_by_tenant[cost_by_tenant["tenant_id"].isin(tenants)]
                             if tenants else cost_by_tenant)
             if tenant_costs.empty:
@@ -641,8 +634,7 @@ def main() -> None:
                     },
                 )
         with c2:
-            section_heading("Cost by use case",
-                            "Which feature the spend belongs to.")
+            section_heading("Cost by use case")
             uc_costs = (cost_by_use_case[cost_by_use_case["use_case"].isin(use_cases)]
                         if use_cases else cost_by_use_case)
             if uc_costs.empty:
@@ -668,23 +660,19 @@ def main() -> None:
                     .agg(total_cost_usd=("cost_usd", "sum"),
                          call_count=("trace_id", "count"))
                     .reset_index())
+        section_heading("Cost by model")
         if len(by_model) < 2:
             row = by_model.iloc[0]
-            section_heading("Cost by model",
-                            "Only one model in this selection, so there is "
-                            "nothing to compare.")
             render_tiles([metric_tile(str(row["model"]),
                                       format_currency(row["total_cost_usd"]),
                                       f"{int(row['call_count']):,} calls")])
         else:
-            section_heading("Cost by model",
-                            "Same spend, grouped by which model answered.")
             st.altair_chart(
                 ranked_bar_chart(by_model, "model", "total_cost_usd",
                                  "Model", "Total cost (USD)", "$,.4f",
                                  "Total cost", colors), width="stretch")
 
-        section_heading("Most expensive calls", "The ten calls that cost the most.")
+        section_heading("Most expensive calls")
         st.dataframe(
             filtered.nlargest(10, "cost_usd")[
                 ["timestamp", "tenant_id", "use_case", "model", "cost_usd",
@@ -704,9 +692,7 @@ def main() -> None:
         )
 
     with tab_lat:
-        section_heading("Latency percentiles by model",
-                        "p50 is the typical call; p99 is the tail users "
-                        "complain about.")
+        section_heading("Latency percentiles by model")
         if latency_percentiles.empty:
             st.info("Latency percentile analytics are not available yet.")
         else:
@@ -736,14 +722,12 @@ def main() -> None:
 
         l1, l2 = st.columns(2, gap="large")
         with l1:
-            section_heading("Latency distribution",
-                            "How the individual calls spread out.")
+            section_heading("Latency distribution")
             st.altair_chart(
                 histogram_chart(filtered, "latency_ms", "Latency (ms)",
                                 ",.0f", colors), width="stretch")
         with l2:
-            section_heading("Throughput by model",
-                            "Output tokens generated per second.")
+            section_heading("Throughput by model")
             tp = (filtered.groupby("model", dropna=True)
                   .agg(tokens_per_second=("tokens_per_second", "mean"),
                        call_count=("trace_id", "count")).reset_index())
@@ -752,7 +736,7 @@ def main() -> None:
                                  "Model", "Tokens / second", ",.0f",
                                  "Avg throughput", colors), width="stretch")
 
-        section_heading("Slowest calls", "The ten calls that took the longest.")
+        section_heading("Slowest calls")
         st.dataframe(
             filtered.nlargest(10, "latency_ms")[
                 ["timestamp", "model", "latency_ms", "attempts_used",
@@ -776,18 +760,15 @@ def main() -> None:
         else:
             q1, q2 = st.columns(2, gap="large")
             with q1:
-                section_heading("Quality distribution",
-                                "How the judge scored these responses.")
+                section_heading("Quality distribution")
                 st.altair_chart(quality_score_chart(filtered, colors),
                                 width="stretch")
             with q2:
-                section_heading("Cost against quality",
-                                "One dot per call. Up and to the left is better.")
+                section_heading("Cost against quality")
                 st.altair_chart(cost_vs_quality_chart(filtered, colors),
                                 width="stretch")
 
-            section_heading("Quality by use case",
-                            "Average judge score per feature.")
+            section_heading("Quality by use case")
             qbu = (filtered.dropna(subset=["quality_score"])
                    .groupby("use_case", dropna=True)
                    .agg(quality_score=("quality_score", "mean"),
@@ -799,9 +780,7 @@ def main() -> None:
                                      ",.1f", "Avg quality", colors),
                     width="stretch")
 
-        section_heading("Models by query type",
-                        "Same job, different models. High quality per dollar "
-                        "is the cheaper model doing comparable work.")
+        section_heading("Models by query type")
         mbq = load_model_by_query_type(database)
         if mbq.empty:
             st.info("No classified calls yet. Turn classification on with "
@@ -825,8 +804,7 @@ def main() -> None:
                 },
             )
 
-        section_heading("Finish reasons",
-                        "`stop` finished naturally; `length` was cut off.")
+        section_heading("Finish reasons")
         fr = (filtered.groupby("finish_reason", dropna=False)
               .agg(call_count=("trace_id", "count")).reset_index())
         fr["finish_reason"] = fr["finish_reason"].fillna("(none — call failed)")
@@ -836,8 +814,7 @@ def main() -> None:
             width="stretch")
 
     with tab_tok:
-        section_heading("Input vs output tokens by use case",
-                        "Long prompts and long answers cost differently.")
+        section_heading("Input vs output tokens by use case")
         tok = (filtered.groupby("use_case", dropna=True)
                .agg(input_tokens=("input_tokens", "sum"),
                     output_tokens=("output_tokens", "sum")).reset_index())
@@ -849,12 +826,12 @@ def main() -> None:
 
         t1, t2 = st.columns(2, gap="large")
         with t1:
-            section_heading("Tokens per call", "Distribution across the selection.")
+            section_heading("Tokens per call")
             st.altair_chart(
                 histogram_chart(filtered, "total_tokens", "Tokens per call",
                                 ",.0f", colors), width="stretch")
         with t2:
-            section_heading("Avg tokens per call by model", "")
+            section_heading("Avg tokens per call by model")
             tpm = (filtered.groupby("model", dropna=True)
                    .agg(total_tokens=("total_tokens", "mean"),
                         call_count=("trace_id", "count")).reset_index())
@@ -867,17 +844,16 @@ def main() -> None:
         if daily.empty:
             st.info("No timestamped calls in this selection.")
         else:
-            section_heading("Calls by day", "How much traffic this project sent.")
+            section_heading("Calls by day")
             st.altair_chart(
                 daily_chart(daily, "calls", "Calls", ",.0f", colors),
                 width="stretch")
 
-            section_heading("Calls by hour of day",
-                            "When this project talks to the LLM.")
+            section_heading("Calls by hour of day")
             st.altair_chart(calls_by_hour_chart(filtered, colors),
                             width="stretch")
 
-            section_heading("Daily totals", "")
+            section_heading("Daily totals")
             st.dataframe(
                 daily, width="stretch", hide_index=True,
                 column_config={
@@ -888,7 +864,7 @@ def main() -> None:
             )
 
     with tab_calls:
-        section_heading("Recent calls", "Newest first, capped at 200 rows.")
+        section_heading("Recent calls")
         recent = filtered.sort_values("timestamp", ascending=False).head(200)
         st.dataframe(
             recent[["timestamp", "tenant_id", "use_case", "provider", "model",
@@ -916,9 +892,7 @@ def main() -> None:
             f"llm_traces_{datetime.now():%Y%m%d_%H%M%S}.csv", "text/csv")
 
     with tab_sql:
-        section_heading("SQL explorer",
-                        "Table: llm_traces · Views: v_cost_by_tenant, "
-                        "v_cost_by_use_case, v_latency_percentiles, v_summary")
+        section_heading("SQL explorer")
         query = st.text_area(
             "Query", height=110,
             value="SELECT * FROM llm_traces ORDER BY timestamp DESC LIMIT 50;")
