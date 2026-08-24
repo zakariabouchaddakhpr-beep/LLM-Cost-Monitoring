@@ -55,6 +55,8 @@ class TraceRepository:
 
     def _init_schema(self) -> None:
         self._client.command(schema.table_ddl(self.database))
+        for statement in schema.migration_ddl(self.database):
+            self._client.command(statement)
         for statement in schema.view_ddl(self.database):
             self._client.command(statement)
 

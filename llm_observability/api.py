@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 from llm_observability.config.settings import resolve_database
+from llm_observability.core.domain.routing import choose, resolve
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 _DASHBOARD_APP = _PACKAGE_DIR / "dashboard" / "app.py"
@@ -14,18 +15,19 @@ def _provider_from_model(model: str) -> str:
 
 class Observer:
 
-    def __init__(self, name: str, model: str, api_key: str | None = None, *,
+    def __init__(self, name: str, model: str | dict, api_key: str | None = None, *,
                  score_quality: bool = False, classify_query: bool = False,
                  judge_api_key: str | None = None,
                  database: str | None = None):
         if not name or not name.strip():
             raise ValueError('name is required, e.g. name="my-app"')
-        if not model or not model.strip():
+        if not model:
             raise ValueError('model is required, e.g. model="cerebras/gpt-oss-120b"')
 
         self.name = name.strip()
-        self.model = model.strip()
-        self.provider = _provider_from_model(self.model)
+        self._models = (model if isinstance(model, dict)
+                        else {"weak": model.strip()})
+        self._default_tier = next(iter(self._models))
         self.score_quality = score_quality
         self.classify_query = classify_query
         self._api_key = api_key
@@ -35,8 +37,19 @@ class Observer:
 
         from llm_observability.core.application.monitor import LLMMonitor
 
-        self._monitor = LLMMonitor(provider_name=self.provider,
-                                   model=self.model, api_key=api_key)
+        self._monitors = {
+            tier: LLMMonitor(provider_name=_provider_from_model(model_string),
+                             model=model_string, api_key=api_key)
+            for tier, model_string in self._models.items()
+        }
+
+        self._classifier = None
+        if isinstance(model, dict):
+            from llm_observability.core.infrastructure.classifier import (
+                PromptClassifier,
+            )
+
+            self._classifier = PromptClassifier()
 
         from llm_observability.core.infrastructure.persistence import TraceRepository
 
@@ -46,9 +59,19 @@ class Observer:
     def database(self) -> str:
         return self._database
 
+    def _pick(self, prompt: str):
+        if self._classifier is None:
+            return self._default_tier, None
+
+        profile = self._classifier.classify(prompt)
+        tier = resolve(choose(profile.task, profile.complexity), self._models)
+        return tier, profile
+
     def call(self, prompt: str, *, tenant_id: str | None = None,
              use_case: str | None = None):
-        result = self._monitor.call(
+        tier, profile = self._pick(prompt)
+
+        result = self._monitors[tier].call(
             prompt,
             score_response_quality=self.score_quality,
             classify_query=self.classify_query,
@@ -56,13 +79,19 @@ class Observer:
             use_case=use_case,
             judge_api_key=self._judge_api_key,
         )
+
+        result.tier = tier
+        if profile is not None:
+            result.task_type = profile.task
+            result.complexity = profile.complexity
+
         self._repo.save(result)
         return result
 
     def embed(self, inputs, *, tenant_id: str | None = None,
               use_case: str | None = None):
-        result = self._monitor.embed(inputs, tenant_id=tenant_id,
-                                     use_case=use_case)
+        result = self._monitors[self._default_tier].embed(
+            inputs, tenant_id=tenant_id, use_case=use_case)
         self._repo.save(result)
         return result
 
@@ -104,7 +133,7 @@ def launch_dashboard(database: str | None = None, name: str | None = None, *,
 _default: Observer | None = None
 
 
-def init(name: str, model: str, api_key: str | None = None, *,
+def init(name: str, model: str | dict, api_key: str | None = None, *,
          score_quality: bool = False, classify_query: bool = False,
          judge_api_key: str | None = None,
          database: str | None = None) -> Observer:

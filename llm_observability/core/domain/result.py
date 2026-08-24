@@ -41,6 +41,10 @@ class LLMCallResult:
     use_case: Optional[str] = None
     query_type: Optional[str] = None
 
+    task_type: Optional[str] = None
+    complexity: Optional[float] = None
+    tier: Optional[str] = None
+
     vector_dimensions: Optional[int] = None
     input_count: Optional[int] = None
     embeddings: Optional[list] = None

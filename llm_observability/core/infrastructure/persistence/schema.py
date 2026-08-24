@@ -8,6 +8,13 @@ COLUMNS = [
     "quality_reasoning", "cost_efficiency", "request_id", "error_type",
     "error", "span_id", "trace_otel_id", "tenant_id", "use_case",
     "query_type", "vector_dimensions", "input_count",
+    "task_type", "complexity", "tier",
+]
+
+ADDED_COLUMNS = [
+    ("task_type", "LowCardinality(Nullable(String))"),
+    ("complexity", "Nullable(Float64)"),
+    ("tier", "LowCardinality(Nullable(String))"),
 ]
 
 TABLE_DDL = """
@@ -41,7 +48,10 @@ CREATE TABLE IF NOT EXISTS {database}.llm_traces (
     use_case          LowCardinality(Nullable(String)),
     query_type        LowCardinality(Nullable(String)),
     vector_dimensions Nullable(UInt32),
-    input_count       Nullable(UInt32)
+    input_count       Nullable(UInt32),
+    task_type         LowCardinality(Nullable(String)),
+    complexity        Nullable(Float64),
+    tier              LowCardinality(Nullable(String))
 ) ENGINE = MergeTree
 PARTITION BY toYYYYMM(timestamp)
 ORDER BY (timestamp, provider, model)
@@ -117,6 +127,14 @@ def database_ddl(database: str) -> str:
 
 def table_ddl(database: str) -> str:
     return TABLE_DDL.format(database=database).strip()
+
+
+def migration_ddl(database: str) -> list[str]:
+    return [
+        f"ALTER TABLE {database}.llm_traces "
+        f"ADD COLUMN IF NOT EXISTS {column} {column_type}"
+        for column, column_type in ADDED_COLUMNS
+    ]
 
 
 def view_ddl(database: str) -> list[str]:

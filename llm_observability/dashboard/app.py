@@ -68,23 +68,65 @@ def page_css(colors: dict) -> str:
            border-radius:999px; padding:.16rem .6rem; letter-spacing:.02em; }}
   .lede {{ font-family:{FONT}; font-size:.85rem; color:{colors['ink_soft']};
            margin:0 0 1.1rem 0; }}
-  .tiles {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr));
-            gap:.55rem; margin:.2rem 0 .5rem 0; }}
+  .tiles {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+            gap:.5rem; margin:.25rem 0 .55rem 0; }}
   .tile {{ background:{colors['surface']}; border:1px solid {colors['border']};
-           border-radius:10px; padding:.7rem .85rem; }}
-  .tile .lbl {{ font-family:{FONT}; font-size:.68rem; font-weight:600;
-                letter-spacing:.05em; text-transform:uppercase;
-                color:{colors['muted']}; margin-bottom:.28rem; }}
-  .tile .val {{ font-family:{FONT}; font-size:1.45rem; font-weight:600;
-                color:{colors['ink']}; line-height:1.12; }}
-  .tile .sub {{ font-family:{FONT}; font-size:.71rem; color:{colors['muted']};
-                margin:.2rem 0 0 0; }}
+           border-radius:9px; padding:.72rem .9rem; position:relative;
+           transition:border-color .15s ease; }}
+  .tile:hover {{ border-color:{colors['axis']}; }}
+  .tile .lbl {{ font-family:{FONT}; font-size:.645rem; font-weight:600;
+                letter-spacing:.09em; text-transform:uppercase;
+                color:{colors['muted']}; margin-bottom:.34rem; }}
+  .tile .val {{ font-family:{FONT}; font-size:1.42rem; font-weight:600;
+                color:{colors['ink']}; line-height:1.1;
+                font-variant-numeric:tabular-nums; letter-spacing:-.018em; }}
+  .tile .sub {{ font-family:{FONT}; font-size:.7rem; color:{colors['muted']};
+                margin:.28rem 0 0 0; font-variant-numeric:tabular-nums; }}
   .tile .sub.good {{ color:{colors['good']}; }}
   .tile .sub.bad {{ color:{colors['bad']}; }}
-  .sec {{ font-family:{FONT}; font-size:.95rem; font-weight:600;
-          color:{colors['ink']}; margin:.35rem 0 .1rem 0; }}
+
+  .sec {{ display:flex; align-items:center; gap:.7rem;
+          margin:1.35rem 0 .55rem 0; }}
+  .sec span {{ font-family:{FONT}; font-size:.7rem; font-weight:700;
+               letter-spacing:.1em; text-transform:uppercase;
+               color:{colors['ink_soft']}; white-space:nowrap; }}
+  .sec:after {{ content:""; flex:1; height:1px; background:{colors['grid']}; }}
+
+  button[data-baseweb="tab"] {{
+      font-family:{FONT} !important; font-size:.79rem !important;
+      font-weight:600 !important; letter-spacing:.035em !important;
+      color:{colors['muted']} !important; padding:.35rem .1rem !important;
+  }}
+  button[data-baseweb="tab"]:hover {{ color:{colors['ink']} !important; }}
+  button[data-baseweb="tab"][aria-selected="true"] {{
+      color:{colors['ink']} !important;
+  }}
+  [data-baseweb="tab-highlight"] {{ background:{colors['s1']} !important;
+                                    height:2px !important; }}
+  [data-baseweb="tab-border"] {{ background:{colors['grid']} !important; }}
+  [data-testid="stTabs"] [data-baseweb="tab-list"] {{ gap:1.35rem; }}
+
+  [data-testid="stDataFrame"], [data-testid="stTable"] {{
+      border-radius:9px; overflow:hidden; border:1px solid {colors['border']};
+  }}
+  [data-testid="stSidebar"] {{ border-right:1px solid {colors['border']}; }}
+  [data-testid="stSidebar"] h3 {{
+      font-family:{FONT} !important; font-size:.68rem !important;
+      font-weight:700 !important; letter-spacing:.1em !important;
+      text-transform:uppercase !important; color:{colors['muted']} !important;
+      margin:.4rem 0 .5rem 0 !important;
+  }}
+  [data-testid="stCaptionContainer"] p {{
+      font-variant-numeric:tabular-nums; letter-spacing:.005em;
+  }}
 </style>
 """
+
+
+def unfiltered_when_all(selected, options):
+    if not options or set(selected or []) == set(options):
+        return None
+    return selected
 
 
 @st.cache_data(ttl=15, show_spinner="Loading traces from ClickHouse...")
@@ -198,7 +240,7 @@ def render_tiles(items: list[str]) -> None:
 
 
 def section_heading(title: str) -> None:
-    st.markdown(f'<p class="sec">{html.escape(title)}</p>',
+    st.markdown(f'<div class="sec"><span>{html.escape(title)}</span></div>',
                 unsafe_allow_html=True)
 
 
@@ -428,6 +470,44 @@ def calls_by_hour_chart(df: pd.DataFrame, colors: dict) -> alt.Chart:
     return style_chart(chart, 210, colors)
 
 
+def complexity_by_task_chart(df: pd.DataFrame, colors: dict) -> alt.Chart:
+    d = df.dropna(subset=["complexity", "task_type"])
+
+    chart = alt.Chart(d).mark_boxplot(size=16, color=colors["s1"],
+                                      outliers={"color": colors["s2"]}).encode(
+        y=alt.Y("task_type:N", title=None,
+                axis=alt.Axis(labelLimit=190, labelPadding=8)),
+        x=alt.X("complexity:Q", title="Complexity",
+                scale=alt.Scale(domain=[0, 1], nice=False),
+                axis=alt.Axis(format=".2f", grid=True, tickCount=6)),
+    )
+    return style_chart(chart, max(170, 46 * d["task_type"].nunique()), colors)
+
+
+def tier_by_task_chart(df: pd.DataFrame, colors: dict) -> alt.Chart:
+    agg = (df.groupby(["task_type", "tier"], dropna=True)
+           .agg(calls=("trace_id", "count")).reset_index())
+
+    order = [t for t in ("weak", "mid", "strong") if t in set(agg["tier"])]
+    palette = {"weak": colors["s3"], "mid": colors["s1"], "strong": colors["s2"]}
+
+    chart = alt.Chart(agg).mark_bar(size=14, cornerRadiusEnd=3).encode(
+        y=alt.Y("task_type:N", title=None,
+                axis=alt.Axis(labelLimit=190, labelPadding=8)),
+        yOffset=alt.YOffset("tier:N", sort=order),
+        x=alt.X("calls:Q", title="Calls",
+                axis=alt.Axis(format=",.0f", grid=True, tickCount=5)),
+        color=alt.Color("tier:N",
+                        scale=alt.Scale(domain=order,
+                                        range=[palette[t] for t in order]),
+                        legend=alt.Legend(title=None)),
+        tooltip=[alt.Tooltip("task_type:N", title="Task"),
+                 alt.Tooltip("tier:N", title="Tier"),
+                 alt.Tooltip("calls:Q", title="Calls", format=",")],
+    )
+    return style_chart(chart, max(180, 62 * agg["task_type"].nunique()), colors)
+
+
 def main() -> None:
     st.set_page_config(page_title="LLM Cost Monitor", page_icon="📊",
                        layout="wide", initial_sidebar_state="collapsed")
@@ -521,8 +601,13 @@ def main() -> None:
                   + pd.Timedelta(days=1)).to_pydatetime()
 
     try:
-        data = load_data(database, start_ts, end_ts, providers, tenants,
-                         use_cases, query_types)
+        data = load_data(
+            database, start_ts, end_ts,
+            unfiltered_when_all(providers, provider_options),
+            unfiltered_when_all(tenants, tenant_options),
+            unfiltered_when_all(use_cases, use_case_options),
+            unfiltered_when_all(query_types, query_type_options),
+        )
     except ClickHouseUnavailable as exc:
         st.error(str(exc))
         return
@@ -595,8 +680,10 @@ def main() -> None:
                  .agg(cost_usd=("cost_usd", "sum"), calls=("trace_id", "count"))
                  .reset_index().sort_values("date"))
 
-    tab_cost, tab_lat, tab_qual, tab_tok, tab_time, tab_calls, tab_sql = st.tabs(
-        ["Cost", "Latency", "Quality", "Tokens", "Activity", "Calls", "SQL"]
+    (tab_cost, tab_lat, tab_qual, tab_route, tab_tok, tab_time, tab_calls,
+     tab_sql) = st.tabs(
+        ["Cost", "Latency", "Quality", "Routing", "Tokens", "Activity",
+         "Calls", "SQL"]
     )
 
     with tab_cost:
@@ -812,6 +899,109 @@ def main() -> None:
             ranked_bar_chart(fr, "finish_reason", "call_count",
                              "Finish reason", "Calls", ",.0f", "Calls", colors),
             width="stretch")
+
+    with tab_route:
+        routed = filtered.dropna(subset=["tier"]) if "tier" in filtered.columns \
+            else filtered.iloc[0:0]
+
+        if routed.empty:
+            st.info(
+                "No routed calls in this selection. Routing turns on when you pass "
+                "a model pool instead of a single model:\n\n"
+                '`obs.init(name="my-app", model={"weak": ..., "strong": ...})`'
+            )
+        else:
+            escalated = int((routed["tier"] != "weak").sum())
+            render_tiles([
+                metric_tile("Routed calls", f"{len(routed):,}",
+                            f"{len(routed) / total_calls:.0%} of all calls"),
+                metric_tile("Escalated", f"{escalated:,}",
+                            f"{escalated / len(routed):.0%} above the base tier",
+                            "bad" if escalated else "good"),
+                metric_tile("Avg complexity",
+                            f"{routed['complexity'].mean(skipna=True):.3f}",
+                            f"max {routed['complexity'].max():.3f}"),
+                metric_tile("Task types", f"{routed['task_type'].nunique():,}",
+                            "seen by the classifier"),
+            ])
+
+            section_heading("Complexity distribution")
+            st.altair_chart(
+                histogram_chart(routed, "complexity", "Complexity", ".2f",
+                                colors), width="stretch")
+            st.caption(
+                "Where your prompts actually fall. Set thresholds from this — "
+                "a threshold above the bulk of the distribution never fires, "
+                "and one below it escalates everything."
+            )
+
+            section_heading("Complexity by task type")
+            st.altair_chart(complexity_by_task_chart(routed, colors),
+                            width="stretch")
+            st.caption(
+                "Each task needs its own threshold: the scale is not comparable "
+                "across tasks, and tasks fail differently under a weak model."
+            )
+
+            r1, r2 = st.columns(2, gap="large")
+            with r1:
+                section_heading("Calls by tier")
+                by_tier = (routed.groupby("tier", dropna=True)
+                           .agg(call_count=("trace_id", "count")).reset_index())
+                st.altair_chart(
+                    ranked_bar_chart(by_tier, "tier", "call_count", "Tier",
+                                     "Calls", ",.0f", "Calls", colors),
+                    width="stretch")
+            with r2:
+                section_heading("Avg latency by tier")
+                lat_tier = (routed.groupby("tier", dropna=True)
+                            .agg(latency_ms=("latency_ms", "mean"),
+                                 call_count=("trace_id", "count")).reset_index())
+                st.altair_chart(
+                    ranked_bar_chart(lat_tier, "tier", "latency_ms", "Tier",
+                                     "Avg latency (ms)", ",.0f",
+                                     "Avg latency", colors), width="stretch")
+
+            section_heading("Which tasks get escalated")
+            st.altair_chart(tier_by_task_chart(routed, colors), width="stretch")
+
+            section_heading("Models actually used")
+            by_model_tier = (routed.groupby(["tier", "model"], dropna=True)
+                             .agg(calls=("trace_id", "count"),
+                                  avg_complexity=("complexity", "mean"),
+                                  avg_latency_ms=("latency_ms", "mean"),
+                                  total_cost_usd=("cost_usd", "sum"))
+                             .reset_index())
+            st.dataframe(
+                by_model_tier.sort_values("calls", ascending=False),
+                width="stretch", hide_index=True,
+                column_config={
+                    "tier": st.column_config.TextColumn("Tier"),
+                    "model": st.column_config.TextColumn("Model"),
+                    "calls": st.column_config.NumberColumn("Calls", format="%d"),
+                    "avg_complexity": st.column_config.NumberColumn("Avg complexity", format="%.3f"),
+                    "avg_latency_ms": st.column_config.NumberColumn("Avg latency (ms)", format="%.0f"),
+                    "total_cost_usd": st.column_config.NumberColumn("Total cost", format="$%.6f"),
+                },
+            )
+
+            section_heading("Recent routing decisions")
+            st.dataframe(
+                routed.sort_values("timestamp", ascending=False).head(100)[
+                    ["timestamp", "task_type", "complexity", "tier", "model",
+                     "latency_ms", "total_tokens", "prompt"]],
+                width="stretch", hide_index=True,
+                column_config={
+                    "timestamp": st.column_config.DatetimeColumn("Time", format="YYYY-MM-DD HH:mm:ss"),
+                    "task_type": st.column_config.TextColumn("Task"),
+                    "complexity": st.column_config.NumberColumn("Complexity", format="%.3f"),
+                    "tier": st.column_config.TextColumn("Tier"),
+                    "model": st.column_config.TextColumn("Model"),
+                    "latency_ms": st.column_config.NumberColumn("Latency (ms)", format="%.0f"),
+                    "total_tokens": st.column_config.NumberColumn("Tokens", format="%d"),
+                    "prompt": st.column_config.TextColumn("Prompt", width="large"),
+                },
+            )
 
     with tab_tok:
         section_heading("Input vs output tokens by use case")
