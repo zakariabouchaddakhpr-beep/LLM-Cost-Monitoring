@@ -17,8 +17,9 @@ from llm_observability.api import (
     database,
     embed,
     init,
+    review,
     summary,
 )
 
-__all__ = ["Observer", "call", "dashboard", "database", "embed", "init",
+__all__ = ["Observer", "call", "dashboard", "database", "embed", "init", "review",
            "summary"]

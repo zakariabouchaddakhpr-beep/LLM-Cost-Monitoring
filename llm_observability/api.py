@@ -98,6 +98,11 @@ class Observer:
     def summary(self) -> dict:
         return self._repo.get_summary()
 
+    def review(self, days: int | None = None):
+        from llm_observability.recommender import review as recommender
+
+        return recommender.run(self._models, database=self._database, days=days)
+
     def close(self) -> None:
         self._repo.close()
 
@@ -168,6 +173,10 @@ def embed(inputs, *, tenant_id: str | None = None,
 
 def summary() -> dict:
     return _require_default().summary()
+
+
+def review(days: int | None = None):
+    return _require_default().review(days=days)
 
 
 def dashboard(*, port: int = 8501, address: str | None = None,

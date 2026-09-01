@@ -190,6 +190,32 @@ def load_model_by_query_type(database: str):
         repo.close()
 
 
+@st.cache_data(ttl=300, show_spinner="Loading the recommender...")
+def load_recommender(models: tuple):
+    from llm_observability.recommender import neighbours, tiering, verdict
+
+    pairs = dict(models)
+    missing = sorted({name for name in pairs.values()
+                      if not tiering.is_scored(name)})
+    if missing:
+        return None, None, None, missing
+
+    stand_ins = {tier: tiering.stand_in(name) for tier, name in pairs.items()}
+    return (stand_ins, neighbours.classify_sample(),
+            verdict.load_reference(stand_ins), [])
+
+
+def models_by_tier(frame: pd.DataFrame) -> dict:
+    routed = frame.dropna(subset=["tier", "model"])
+    if routed.empty:
+        return {}
+
+    if "timestamp" in routed.columns:
+        routed = routed.sort_values("timestamp")
+
+    return routed.groupby("tier")["model"].last().to_dict()
+
+
 @st.cache_data(ttl=15)
 def get_db_info(database: str):
     cfg = get_clickhouse_config(database)
@@ -508,6 +534,33 @@ def tier_by_task_chart(df: pd.DataFrame, colors: dict) -> alt.Chart:
     return style_chart(chart, max(180, 62 * agg["task_type"].nunique()), colors)
 
 
+def verdict_chart(judged: pd.DataFrame, field: str, colors: dict) -> alt.Chart:
+    decided = judged[judged["verdict"] != "NO_VERDICT"]
+    agg = (decided.groupby([field, "verdict"], dropna=True)
+           .size().reset_index(name="calls"))
+
+    palette = {"OPTIMAL": colors["s3"], "OVERPAID": colors["s2"],
+               "UNDERSERVED": colors["bad"]}
+    order = [name for name in ("OPTIMAL", "OVERPAID", "UNDERSERVED")
+             if name in set(agg["verdict"])]
+
+    chart = alt.Chart(agg).mark_bar(size=13, cornerRadiusEnd=3).encode(
+        y=alt.Y(f"{field}:N", title=None,
+                axis=alt.Axis(labelLimit=190, labelPadding=8)),
+        yOffset=alt.YOffset("verdict:N", sort=order),
+        x=alt.X("calls:Q", title="Calls",
+                axis=alt.Axis(format=",.0f", grid=True, tickCount=5)),
+        color=alt.Color("verdict:N",
+                        scale=alt.Scale(domain=order,
+                                        range=[palette[name] for name in order]),
+                        legend=alt.Legend(title=None)),
+        tooltip=[alt.Tooltip(f"{field}:N", title=field.replace("_", " ").title()),
+                 alt.Tooltip("verdict:N", title="Verdict"),
+                 alt.Tooltip("calls:Q", title="Calls", format=",")],
+    )
+    return style_chart(chart, max(180, 62 * agg[field].nunique()), colors)
+
+
 def main() -> None:
     st.set_page_config(page_title="LLM Cost Monitor", page_icon="📊",
                        layout="wide", initial_sidebar_state="collapsed")
@@ -680,10 +733,10 @@ def main() -> None:
                  .agg(cost_usd=("cost_usd", "sum"), calls=("trace_id", "count"))
                  .reset_index().sort_values("date"))
 
-    (tab_cost, tab_lat, tab_qual, tab_route, tab_tok, tab_time, tab_calls,
-     tab_sql) = st.tabs(
-        ["Cost", "Latency", "Quality", "Routing", "Tokens", "Activity",
-         "Calls", "SQL"]
+    (tab_cost, tab_lat, tab_qual, tab_route, tab_rec, tab_tok, tab_time,
+     tab_calls, tab_sql) = st.tabs(
+        ["Cost", "Latency", "Quality", "Routing", "Recommender", "Tokens",
+         "Activity", "Calls", "SQL"]
     )
 
     with tab_cost:
@@ -1002,6 +1055,99 @@ def main() -> None:
                     "prompt": st.column_config.TextColumn("Prompt", width="large"),
                 },
             )
+
+    with tab_rec:
+        routed_calls = (filtered.dropna(subset=["tier"])
+                        if "tier" in filtered.columns else filtered.iloc[0:0])
+        pool_models = models_by_tier(routed_calls)
+
+        if not pool_models:
+            st.info(
+                "Nothing to review yet. The recommender judges routed calls, so "
+                "pass a model pool to `obs.init()` and make some calls first:\n\n"
+                '`obs.init(name="my-app", model={"weak": ..., "strong": ...})`'
+            )
+        else:
+            stand_ins, pool, reference, missing = load_recommender(
+                tuple(sorted(pool_models.items())))
+
+            if missing:
+                st.warning(
+                    "These models have not been measured against the probe set "
+                    "yet, so their tier is unknown:\n\n"
+                    + "\n".join(f"- `{name}`" for name in missing)
+                    + "\n\nRun `obs.review()` once from your app. It scores each "
+                    "model on 96 probe prompts (about 17 minutes per model, one "
+                    "time only) and caches the result."
+                )
+            else:
+                from llm_observability.recommender import review as recommender
+
+                judged = recommender.judge_traces(routed_calls, stand_ins,
+                                                  pool, reference)
+                figures = recommender.summarise(judged)
+                decided = max(figures["calls"] - figures["no_verdict"], 1)
+
+                render_tiles([
+                    metric_tile("Optimal", f"{figures['optimal'] / decided:.0%}",
+                                f"{figures['optimal']:,} calls", "good"),
+                    metric_tile("Overpaid", f"{figures['overpaid'] / decided:.0%}",
+                                f"{format_currency(figures['wasted_usd'])} wasted",
+                                "bad" if figures["overpaid"] else ""),
+                    metric_tile("Underserved",
+                                f"{figures['underserved'] / decided:.0%}",
+                                f"{figures['quality_lost']:.1f} quality lost",
+                                "bad" if figures["underserved"] else ""),
+                    metric_tile("No verdict", f"{figures['no_verdict']:,}",
+                                "no similar prompt"),
+                    metric_tile("Actual spend",
+                                format_currency(figures["actual_spend"]),
+                                f"over {figures['calls']:,} routed calls"),
+                ])
+
+                section_heading("Which reference model each tier resembles")
+                st.dataframe(
+                    pd.DataFrame([
+                        {"tier": tier, "your model": pool_models[tier],
+                         "behaves like": stand_ins[tier]}
+                        for tier in sorted(pool_models)
+                    ]),
+                    width="stretch", hide_index=True,
+                )
+                st.caption(
+                    "Each of your models was scored on 96 probe prompts and "
+                    "matched to whichever of 13 reference models has the closest "
+                    "ability profile. Quality estimates are read from the "
+                    "stand-in, which is what makes a verdict free."
+                )
+
+                for field, title in (("tier", "Verdicts by tier"),
+                                     ("task_type", "Verdicts by task type"),
+                                     ("use_case", "Verdicts by use case"),
+                                     ("tenant_id", "Verdicts by tenant")):
+                    table = recommender.breakdown(judged, field)
+                    if table.empty:
+                        continue
+
+                    shares = table.reset_index()
+                    for column in ("optimal", "overpaid", "underserved"):
+                        shares[column] = shares[column] * 100
+
+                    section_heading(title)
+                    st.altair_chart(verdict_chart(judged, field, colors),
+                                    width="stretch")
+                    st.dataframe(
+                        shares, width="stretch", hide_index=True,
+                        column_config={
+                            field: st.column_config.TextColumn(
+                                field.replace("_", " ").title()),
+                            "calls": st.column_config.NumberColumn("Calls", format="%d"),
+                            "optimal": st.column_config.NumberColumn("Optimal", format="%.0f%%"),
+                            "overpaid": st.column_config.NumberColumn("Overpaid", format="%.0f%%"),
+                            "underserved": st.column_config.NumberColumn("Underserved", format="%.0f%%"),
+                            "wasted_usd": st.column_config.NumberColumn("Wasted", format="$%.6f"),
+                        },
+                    )
 
     with tab_tok:
         section_heading("Input vs output tokens by use case")

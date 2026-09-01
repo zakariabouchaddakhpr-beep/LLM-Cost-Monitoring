@@ -5,6 +5,8 @@ opentelemetry-sdk==1.44.0
 opentelemetry-exporter-otlp==1.44.0
 opentelemetry-semantic-conventions==0.65b0
 
+sympy==1.14.0
+
 clickhouse-connect==1.7.1
 pandas==3.0.5
 pyarrow==24.0.0
