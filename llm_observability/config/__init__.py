@@ -1,0 +1,41 @@
+"""Settings, read from environment variables. Everything real is in settings.py."""
+
+from llm_observability.config.settings import (
+    DATABASE_ENV_VAR,
+    JUDGE_MODEL,
+    MAX_RETRIES,
+    OTEL_EXPORTER_OTLP_ENDPOINT,
+    OTEL_SERVICE_NAME,
+    PROJECT_NAME,
+    PROJECT_ROOT,
+    RETRY_BACKOFF_SECONDS,
+    AppSettings,
+    ClickHouseConfig,
+    ClickHouseSettings,
+    ConfigError,
+    dashboard_env,
+    get_clickhouse_config,
+    get_settings,
+    resolve_database,
+    slug,
+)
+
+__all__ = [
+    "DATABASE_ENV_VAR",
+    "JUDGE_MODEL",
+    "MAX_RETRIES",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_SERVICE_NAME",
+    "PROJECT_NAME",
+    "PROJECT_ROOT",
+    "RETRY_BACKOFF_SECONDS",
+    "AppSettings",
+    "ClickHouseConfig",
+    "ClickHouseSettings",
+    "ConfigError",
+    "dashboard_env",
+    "get_clickhouse_config",
+    "get_settings",
+    "resolve_database",
+    "slug",
+]

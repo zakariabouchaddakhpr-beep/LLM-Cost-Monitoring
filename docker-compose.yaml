@@ -1,0 +1,44 @@
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.7
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:?set it in .env}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set it in .env}
+    ports:
+      - "${CLICKHOUSE_PORT:-8123}:8123"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8123/ping"]
+      interval: 5s
+      retries: 15
+
+  monitor:
+    build: .
+    command: ["python", "main.py"]
+    env_file: .env
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+    volumes:
+      - ./results:/app/results
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  dashboard:
+    build: .
+    command: ["python", "-m", "llm_observability.dashboard",
+              "--port", "8501", "--address", "0.0.0.0"]
+    env_file: .env
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+    ports:
+      - "${DASHBOARD_PORT:-8501}:8501"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+volumes:
+  clickhouse-data:
