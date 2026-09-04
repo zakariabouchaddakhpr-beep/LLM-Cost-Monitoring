@@ -12,7 +12,7 @@ provider calls. LiteLLM handles all provider-specific routing via the
 model-string prefix (e.g. `openai/gpt-4o`, `anthropic/claude-3-5-sonnet`),
 so the library needs only a single thin adapter.
 
-Four pieces:
+Six pieces:
 
 - **A three-call API** — `obs.init()`, `obs.call()`, `obs.dashboard()`. Adding
   observability to an existing project is three lines and no connection string.
@@ -25,6 +25,12 @@ Four pieces:
 - **A Streamlit dashboard** — cost, latency, quality, tokens and activity over
   whatever the filters select, reading live while the monitored application is
   still writing.
+- **Complexity routing** — pass a pool of models instead of one and each prompt
+  is classified locally, then sent to the cheapest tier that should be able to
+  answer it. The decision is recorded on the trace.
+- **A routing recommender** — every routed call is judged after the fact against
+  a public benchmark, and the cost of a wrong tier is reported in dollars or in
+  quality points.
 
 ## Architecture (layered)
 
@@ -37,21 +43,33 @@ llm_observability/
 ├── core/
 │   ├── domain/              pure business logic — zero external deps
 │   │   ├── result.py        LLMCallResult dataclass
-│   │   └── metrics.py       throughput / cost-efficiency math
+│   │   ├── metrics.py       throughput / cost-efficiency math
+│   │   └── routing.py       the tier policy: thresholds, choose, resolve
 │   ├── application/         orchestration
 │   │   ├── monitor.py       LLMMonitor — the middleman
 │   │   └── quality_scoring.py
 │   ├── infrastructure/      adapters for external systems
 │   │   ├── provider.py      LiteLLM adapter
 │   │   ├── otel.py          OpenTelemetry tracer & meter
+│   │   ├── classifier.py    prompt task type + complexity, run locally
 │   │   └── persistence/     ClickHouse via clickhouse-connect
 │   │       ├── database.py  client factory
 │   │       ├── schema.py    all DDL: database, table, five views
 │   │       └── repository.py TraceRepository (writes + analytics)
 │   └── logging_config.py    configure_logging / get_logger
-└── dashboard/
-    ├── app.py               the Streamlit dashboard
-    └── __main__.py          python -m llm_observability.dashboard
+├── dashboard/
+│   ├── app.py               the Streamlit dashboard
+│   └── __main__.py          python -m llm_observability.dashboard
+└── recommender/             offline analysis — never in the request path
+    ├── sprout.py            reads the SPROUT benchmark files
+    ├── probes.py            picks the probe prompts
+    ├── grading.py           marks an answer without a judge model
+    ├── tiering.py           matches your models to reference stand-ins
+    ├── neighbours.py        finds benchmark prompts resembling yours
+    ├── verdict.py           one verdict for one routing decision
+    ├── review.py            aggregates verdicts into a report
+    ├── thresholds.py        fits the routing thresholds from measured data
+    └── bulk_classify.py     batch prompt classification, resumable
 ```
 
 There is no ORM. ClickHouse needs `ENGINE` and `ORDER BY` clauses that no ORM
@@ -73,7 +91,9 @@ names.
 ```
 ├── llm_observability/       the library (this is what you import)
 ├── main.py                  example app — OTel + ClickHouse showcase
-├── tests/                   126 tests, mirroring the package layout
+├── sproutdb/                the SPROUT benchmark, used by the recommender
+├── recommender_output/      cached probe set, scores and classifications
+├── threshold_study/         evidence behind the shipped routing thresholds
 ├── pyproject.toml           packaging
 ├── requirements.txt
 ├── Dockerfile
@@ -81,8 +101,9 @@ names.
 └── results/                 generated at runtime, not committed
 ```
 
-`main.py` and `tests/` are deliberately outside the package and are not shipped
-by a `pip install`: only `llm_observability/` is.
+`main.py` is deliberately outside the package and is not shipped by a
+`pip install`: only `llm_observability/` is. The dataset and study directories
+are inputs and evidence, not code, and are likewise not packaged.
 
 **Requirements:** Python 3.10 or newer — the code uses the `str | None` union
 syntax — plus a reachable ClickHouse server. Everything else is in
@@ -220,7 +241,7 @@ required.
 | Argument | |
 |---|---|
 | `name` | picks the database: `slug(name)` on the configured server |
-| `model` | the LiteLLM model string; the provider is read from its prefix |
+| `model` | a LiteLLM model string, or a `{tier: model}` dict to turn routing on |
 | `api_key` | passed straight to LiteLLM. Omit it and LiteLLM finds its own from the environment |
 
 An existing database is **reused, never replaced** — call `init()` as often as you
@@ -232,6 +253,7 @@ like.
 obs.summary()          # {'total_calls': 15, 'total_cost_usd': 0.0045, ...}
 obs.database()         # which ClickHouse database this project's traces are in
 obs.embed("some text") # embeddings, instrumented the same way (see below)
+obs.review(days=30)    # judge the routing decisions of the last 30 days
 obs.dashboard(port=8502, block=False)   # a second project, non-blocking
 
 client = obs.init(...)  # or hold the object instead of using the module default
@@ -298,6 +320,85 @@ Two more options worth knowing:
 - **`CLICKHOUSE_DATABASE` still wins** if it is set, so an existing `.env` or the
   Docker services keep behaving exactly as before. `name` only fills in when it is
   unset. You can also pass `database=` to override both.
+
+### Routing
+
+Pass a **pool** of models instead of one and every prompt is classified before it
+is sent, then routed to the cheapest tier that should be able to answer it:
+
+```python
+obs.init(name="my-app", model={
+    "weak":   "groq/llama-3.1-8b-instant",
+    "mid":    "groq/llama-3.3-70b-versatile",
+    "strong": "openai/gpt-4o",
+})
+```
+
+The classifier is NVIDIA's `prompt-task-and-complexity-classifier`, which runs
+**locally** — no network call and no per-request cost. It returns a task type and
+a complexity score between 0 and 1, and the table in
+[routing.py](llm_observability/core/domain/routing.py) maps that score to a tier,
+with two cut points per task type.
+
+Three fields land on the trace — `task_type`, `complexity` and `tier` — so a
+routing decision is auditable rather than invisible, and the dashboard's Routing
+tab is built from them.
+
+**Two rules keep it safe.** An unknown task, or a classifier that failed
+outright, routes to `strong`. And if `choose()` asks for a tier that isn't in
+your pool, `resolve()` rounds **up**, never down. Both lean the same way on
+purpose: overpaying is visible on a cost chart and recoverable, while answering
+too weakly damages output quietly.
+
+> **Four of the eleven task types now carry measured thresholds; the other seven
+> are still the original hand-picked values.** Where they were fitted, the signal
+> underneath turned out to be weak. Against 10,000 benchmark prompts, complexity predicts
+> whether the weak tier will succeed with an AUC of **0.531**, where 0.500 is a
+> coin flip. Only `Code Generation` shows real signal (0.585). The current values
+> still cut spend 30–86% on the four best-supported task types at unchanged
+> quality — they work by no longer overpaying, not by predicting difficulty well.
+> The full evidence is in `threshold_study/`, and
+> `thresholds.band_table()` regenerates the per-task working.
+
+**Routing needs `torch` and `transformers`, which are not in
+`requirements.txt`.** A base install is deliberately light; without them,
+`obs.init()` with a dict raises `ModuleNotFoundError`.
+
+### The routing recommender
+
+Once calls have been routed, `obs.review()` judges those decisions after the fact
+and reports what the wrong ones cost:
+
+```python
+obs.review(days=30)
+```
+
+You cannot re-run the other tiers retrospectively, so the answer comes
+indirectly. The recommender uses **SPROUT** — a public dataset of 44,241 prompts
+already answered and graded for 13 reference models — in five stages:
+
+| Stage | What it does |
+|---|---|
+| `probes` | Picks 96 prompts whose answers can be checked mechanically, spread over six difficulty bands |
+| `grading` | Marks an answer without a judge model: the marker, then "the answer is…", then the last number; compared as text, as a number, then symbolically |
+| `tiering` | Scores each of your models on the probes and matches it to the closest of the 13 references |
+| `neighbours` | For a real trace, finds SPROUT prompts of the same task type and near complexity |
+| `verdict` | Reads each tier's score and cost off its stand-in and compares against what actually ran |
+
+Every call gets one of four verdicts — `OPTIMAL`, `OVERPAID`, `UNDERSERVED`,
+`NO_VERDICT` — and the regret is reported in **two separate units**: dollars
+wasted for overpaying, quality points lost for under-serving. They are never
+summed, because they call for opposite fixes.
+
+Only `tiering` makes paid calls, roughly 17 minutes per model, and the result is
+cached per model in `recommender_output/`, so a second review costs nothing.
+`sproutdb/` must be present — about 555 MB of parquet.
+
+> The prices in [verdict.py](llm_observability/recommender/verdict.py) are
+> placeholders. Measurement showed the fitted thresholds don't move across a 16×
+> price swing, because the policy is quality-constrained rather than
+> cost-constrained — but any **dollar total** the recommender reports is only as
+> good as those numbers.
 
 ### One store or many
 
@@ -540,6 +641,8 @@ tabs:
 | **Cost** | Spend per day, per tenant, per use case, per model, and the ten most expensive calls |
 | **Latency** | p50/p90/p99 per model, the distribution behind them, throughput, and the ten slowest calls |
 | **Quality** | Judge-score distribution, cost against quality, score per use case, models by query type, finish reasons |
+| **Routing** | Complexity distribution, which tasks get escalated, tiers and models actually used |
+| **Recommender** | Verdicts on routing decisions, wasted spend and quality lost |
 | **Tokens** | Input vs output split per use case and per model |
 | **Activity** | Calls per day and per hour of the day |
 | **Calls** | The raw traces, newest first, capped at 200 rows |
@@ -608,6 +711,8 @@ same object is what `TraceRepository.save()` writes as one row.
 - `cost_efficiency` — quality per dollar spent
 - `span_id` / `trace_otel_id` — correlation with OpenTelemetry traces
 - `tenant_id` / `use_case` — cost attribution fields
+- `task_type` / `complexity` / `tier` — the routing decision, when a model pool
+  is configured. `NULL` on unrouted calls, which is what the recommender filters on
 - `vector_dimensions` / `input_count` — embedding calls only
 
 Plus a few conveniences on the object itself:
@@ -633,29 +738,17 @@ in one place without touching library code.
 
 ## Testing
 
-```bash
-python -m pytest tests/ -v
-```
+There is currently **no test suite in the repository.** An earlier `tests/`
+directory covering the recommender's grading, verdict and review logic has been
+removed, so `pytest` collects nothing.
 
-126 tests, in a tree mirroring the package: `tests/domain`, `tests/application`,
-`tests/infrastructure`, `tests/config`, plus `tests/test_api.py` for the public
-surface.
-
-**No test makes a paid API call** — the provider is mocked throughout. The
-persistence and API tests do want a real server, since round-tripping through
-ClickHouse is the only way to catch a schema or type mismatch, but they
-`pytest.skip` with an explanatory message when there isn't one rather than
-failing. To run the full suite:
-
-```bash
-docker compose up -d clickhouse
-python -m pytest tests/ -q
-```
-
-They connect to `CLICKHOUSE_HOST`/`CLICKHOUSE_PORT`, or to
-`TEST_CLICKHOUSE_HOST`/`TEST_CLICKHOUSE_PORT` if you would rather point them at a
-throwaway server than at the one holding your real traces. Each test creates and
-drops its own database.
+When it is restored, two constraints are worth keeping. **No test should make a
+paid API call** — the provider is mocked, and the recommender's pure functions
+(`grading`, `verdict`, `review`, `thresholds`) all take plain DataFrames, so they
+need neither a network nor a database. Anything that does want a real ClickHouse
+should `pytest.skip` with an explanatory message when there isn't one rather than
+failing, and should point at `TEST_CLICKHOUSE_HOST`/`TEST_CLICKHOUSE_PORT` when
+set, so a test run never touches the database holding real traces.
 
 ## Notes
 

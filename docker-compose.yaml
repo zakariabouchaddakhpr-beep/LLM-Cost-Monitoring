@@ -34,6 +34,9 @@ services:
     environment:
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_PORT: "8123"
+    volumes:
+      - ./sproutdb:/app/sproutdb:ro
+      - ./recommender_output:/app/recommender_output:ro
     ports:
       - "${DASHBOARD_PORT:-8501}:8501"
     depends_on:
