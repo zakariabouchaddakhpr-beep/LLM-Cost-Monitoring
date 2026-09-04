@@ -215,10 +215,3 @@ Every call also emits an OpenTelemetry span and three metrics, using the GenAI
 semantic conventions. Console by default, OTLP if you set
 `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
-
-## Notes
-
-- Never commit `.env`.
-- There is currently no test suite in the repository.
-- `litellm` is pinned exactly, because the cost figures depend on its pricing
-  table. Bumping it is how you pick up newly released models.
