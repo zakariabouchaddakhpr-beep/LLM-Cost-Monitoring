@@ -106,6 +106,58 @@ it rounds up, never down.
 > `requirements.txt` — a base install stays light. Without them, passing a dict
 > to `init()` raises `ModuleNotFoundError`.
 
+## Which model goes in which tier?
+
+You don't have to guess. Give it a list and it will measure them:
+
+```python
+from llm_observability.recommender import tiering
+
+tiering.recommend([
+    "groq/allam-2-7b",
+    "groq/openai/gpt-oss-20b",
+    "groq/openai/gpt-oss-120b",
+])
+```
+
+Each model answers the same 96 probe prompts — maths, multiple choice, reasoning
+and science, spread over six difficulty levels — and its answers are marked
+mechanically, with no judge model involved. It prints a table of how each one
+scored per subject, and ends with a pool you can paste straight into `init()`:
+
+```
+  model                          score     maths multiple_  reasoning   science   behaves like
+  groq/allam-2-7b                  0.17      0.00      0.08       0.46      0.13   aws-titan-text-premier-v1
+  groq/openai/gpt-oss-20b          0.32      0.63      0.33       0.25      0.08   wxai-llama-3-2-3b-instruct
+  groq/openai/gpt-oss-120b         0.45      0.71      0.50       0.46      0.13   wxai-llama-3-1-8b-instruct
+
+  Suggested pool - paste this into obs.init():
+
+    model={
+        "weak": "groq/allam-2-7b",
+        "mid": "groq/openai/gpt-oss-20b",
+        "strong": "groq/openai/gpt-oss-120b",
+    }
+```
+
+Tiers are assigned by rank, so the ordering is what matters, not the absolute
+scores — the probes are deliberately hard, so low numbers are normal.
+
+Read the per-subject columns as well as the average. In the run above the weakest
+model scores **0.46 on reasoning**, beating the mid model's 0.25 on that subject
+alone. A single average would have hidden that, and it is exactly the kind of
+lopsidedness worth knowing before you decide which prompts go where.
+
+**"behaves like"** is the SPROUT reference model whose per-subject profile is
+closest. That match is what lets the recommender judge your routing later without
+ever calling your models again.
+
+This is the only part of the project that spends money — roughly **17 minutes per
+model**, paced to stay under a rate limit. Results are cached in
+`recommender_output/`, so running it a second time is free. If more than 2% of
+calls fail it saves nothing and tells you why, so a rate-limited run can never be
+mistaken for a weak model.
+
 ## The recommender
 
 ```python
