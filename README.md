@@ -163,11 +163,6 @@ Every call also emits an OpenTelemetry span and three metrics, using the GenAI
 semantic conventions. Console by default, OTLP if you set
 `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
-## More detail
-
-- **[CODE_NOTES.md](CODE_NOTES.md)** — why the code is the way it is, line by line
-- **[README_full.md](README_full.md)** — the long-form version of this file
-- **`threshold_study/`** — the measurements behind the routing thresholds
 
 ## Notes
 
